@@ -1,0 +1,20 @@
+# Notas que não devem ir pro deploy / entrega de código
+NOTAS_PRIVADAS.md
+
+# Estado e config de runtime
+manutencao.json
+config.json
+__pycache__/
+*.pyc
+*_progresso.json
+
+# Artefatos locais e dados reais de teste/auditoria (nomes/telefones/
+# ata de aluno de verdade - nunca no repositório, mesmo privado)
+atas_recebidas/
+dist/
+testes_atas/
+achados_auditoria.csv
+auditoria_completa.log
+resultado_real4.json
+scratchpad_*.pdf
+teste_ata_pequena.pdf

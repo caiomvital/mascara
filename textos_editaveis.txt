@@ -1,0 +1,47 @@
+Arquivos .py com textos que aparecem em comentários gravados no Fuctura
+ou no e-mail de cobrança/jurídico - todos editáveis a qualquer momento,
+sem risco (são só strings de Python, não afetam a lógica de decisão).
+
+Gerado em 2026-09-09.
+
+reconciliacao_devedor.py
+    - linha 249: ASSUNTO_ANALISE_AUTOMATICA
+      Título do comentário de análise gravado no Fuctura.
+    - linha 558: _TEXTO_CASO (dicionário)
+      Uma frase por tipo de caso (consistente, devedor_sem_turma,
+      advogado_sinalizado_sem_turma_atual, cancelou_mas_ainda_deve,
+      possivel_estorno_pendente, etc.) - isso é o miolo do texto que vai
+      pro Fuctura.
+    - linha 600: montar_comentario_analise()
+      Monta o comentário inteiro (junta as frases acima com os dados
+      reais do aluno).
+    - linha 665: _TEXTO_MATRICULA_RECONCILIACAO
+      Frase usada quando o sistema matricula o aluno em Devedor/Pendência.
+
+email_cobranca.py
+    - linha 24: _CAMPOS_CORPO (lista)
+      Rótulos dos dados pessoais no corpo do e-mail (Nome, CPF, Telefone,
+      Endereço, Bairro, Cidade, CEP, Email).
+    - linha 83: montar_resumo_pagamentos_desistencia()
+      Monta a lista cronológica de pagamentos/desistência que vai no
+      e-mail.
+    - linha 94: frase de "nenhum registro encontrado" (dentro da função
+      acima).
+
+fechamento_logic.py
+    - linha 462: contexto_ata_oficial()
+      Nota de contexto quando um nome da ata não bate com o roster ativo.
+    - linha 475: contexto_aluno_fora_da_turma()
+      Nota de contexto sobre um aluno fora da turma esperada.
+    - linha 505/520: regra_urgente_devedor_advogado()
+      Frase sobre débito sem estar em turma de controle (gravada no
+      comentário financeiro do Fechamento de Turma).
+
+anexos_email.py
+    - avisos sobre ata não encontrada / turma ambígua ao montar os anexos
+      do e-mail (procurar por "avisos.append" no arquivo).
+
+---
+Pra pedir uma mudança de redação: diga qual comentário/frase você viu
+(pode ser um print de tela ou o texto exato) e o que prefere no lugar -
+localizo pelo arquivo/linha acima e ajusto.
