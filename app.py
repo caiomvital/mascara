@@ -732,6 +732,11 @@ __AVISOS__
   <div class="proc-title">Interessados</div>
   <div class="proc-desc">Quem está aguardando contato — nome, telefone e resumo do histórico, pra ligar e depois colocar na turma certa.</div>
 </a>
+<a class="proc-card" href="/calculadora-multa">
+  <div class="proc-icon">🧮</div>
+  <div class="proc-title">Calculadora de Multa</div>
+  <div class="proc-desc">Multa de cancelamento — 10% ou 20% dos módulos não cursados, conforme o contrato.</div>
+</a>
 </div>
 
 <h1 style="margin-top:36px;">Atividade recente</h1>
@@ -1165,6 +1170,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/interessados/triagem":
             self._send_html(INTERESSADOS_TRIAGEM_HTML)
+            return
+
+        if parsed.path == "/calculadora-multa":
+            self._send_html(CALCULADORA_MULTA_HTML)
             return
 
         if parsed.path == "/api/interessados/triagem":
@@ -2685,6 +2694,7 @@ uma análise anterior pra aquele aluno.</p>
   <br><br>
   <label>Prazo mínimo de dívida em aberto, em dias (padrão 365, ~1 ano)</label>
   <input type="number" id="diasMinimos" placeholder="365" min="1" value="365">
+  <button class="btn-nao" type="button" onclick="document.getElementById('diasMinimos').value = 45" style="margin-left:8px;">45 dias (regra oficial p/ Devedor/Pendência)</button>
   <br><br>
   <label>Prazo máximo de dívida em aberto, em dias (padrão 1825, ~5 anos — prazo legal de cobrança; além disso a dívida provavelmente prescreveu)</label>
   <input type="number" id="diasMaximos" placeholder="1825" min="1" value="1825">
@@ -2744,9 +2754,26 @@ async function iniciar() {
       ${a.acao_sugerida ? `<button class="btn-sim" onclick="aplicar('${a.id_aluno}')">Aplicar ação</button>` : ''}
       <button class="btn-nao" onclick="verBoletosCora('${a.id_aluno}')">Ver boletos em aberto (CORA)</button>
       <button class="btn-nao" onclick="verPreviaEmail('${a.id_aluno}')">Ver prévia do e-mail</button>
+      <button class="btn-nao" onclick="toggleContato('${a.id_aluno}')">Registrar contato</button>
       <div id="msg-${a.id_aluno}"></div>
       <div id="cora-${a.id_aluno}" class="fonte" style="margin-top:8px;"></div>
       <div id="email-${a.id_aluno}" style="margin-top:8px;"></div>
+      <div id="contato-${a.id_aluno}" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+        <label>Resultado do contato</label>
+        <select id="contatoResultado-${a.id_aluno}">
+          <option value="Não respondeu">Não respondeu</option>
+          <option value="Bloqueou mensagem">Bloqueou mensagem</option>
+          <option value="Respondeu — vai pagar">Respondeu — vai pagar</option>
+          <option value="Respondeu — não vai pagar">Respondeu — não vai pagar</option>
+          <option value="Outro">Outro (ver observação)</option>
+        </select>
+        <label style="margin-top:8px;">Observação (opcional)</label>
+        <input type="text" id="contatoObs-${a.id_aluno}" placeholder="Ex: ligou, caixa postal">
+        <div style="margin-top:8px;">
+          <button class="acao" onclick="registrarContato('${a.id_aluno}')">Salvar ocorrência</button>
+        </div>
+        <div id="contatoMsg-${a.id_aluno}" style="margin-top:6px;"></div>
+      </div>
     </div>
   `).join('');
 
@@ -2899,6 +2926,36 @@ async function verPreviaEmail(idAluno) {
       ${d.avisos_anexos.length ? `<div class="fonte" style="margin-top:6px; color:var(--warning);">${d.avisos_anexos.map(a => '⚠ ' + a).join('<br>')}</div>` : ''}
     </div>
   `;
+}
+
+// Registro de ocorrencia de contato (pedido do Diogenes via Caio,
+// 2026-09-14): "aluno nao responde"/"bloqueou mensagem" precisam ficar
+// registrados em algum lugar pra a pergunta "quem nao responde aos
+// contatos" ter resposta. Reaproveita o MESMO endpoint generico de
+// comentario manual ja usado na Consulta de Alunos (/api/aluno/<id>/
+// comentario) - nao e um mecanismo novo, so um atalho com um titulo fixo
+// ("Ocorrência de Contato") pra ficar facil de identificar depois.
+function toggleContato(idAluno) {
+  const div = document.getElementById('contato-' + idAluno);
+  div.style.display = div.style.display === 'none' ? 'block' : 'none';
+}
+
+async function registrarContato(idAluno) {
+  const resultado = document.getElementById('contatoResultado-' + idAluno).value;
+  const obs = document.getElementById('contatoObs-' + idAluno).value.trim();
+  const msg = document.getElementById('contatoMsg-' + idAluno);
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  let texto = `Resultado: ${resultado}. Data: ${hoje}.`;
+  if (obs) texto += ` Observação: ${obs}`;
+
+  msg.textContent = 'Registrando...';
+  const r = await fetch(`/api/aluno/${idAluno}/comentario`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ tipo: '3', assunto: 'Ocorrência de Contato', descricao: texto }),
+  });
+  const d = await r.json();
+  if (d.erro) { msg.innerHTML = `<span style="color:var(--danger)">${d.erro}</span>`; return; }
+  msg.innerHTML = `<span style="color:var(--success)">Ocorrência registrada!</span>`;
 }
 </script></body></html>"""
 
@@ -4151,6 +4208,43 @@ async function mover(idAluno) {
 }
 
 carregar();
+</script></body></html>"""
+
+
+CALCULADORA_MULTA_HTML = "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">\n<title>Calculadora de Multa</title>\n<style>" + BASE_CSS + """
+  .page { max-width: 480px; }
+  .resultado { margin-top:16px; padding:14px; border-radius:var(--radius-sm); background:var(--success-bg); font-size:1.1rem; }
+</style></head><body>
+<div class="page">
+<a class="voltar" href="/">← voltar</a>
+<h1>Calculadora de Multa de Cancelamento</h1>
+<p class="subtitulo">Regra combinada com o Diógenes (2026-09-14): 10% ou 20% do valor dos módulos não cursados, dependendo do contrato — o sistema não decide sozinho qual percentual usar, só calcula os dois pra você escolher.</p>
+
+<div class="card">
+  <label>Valor dos módulos não cursados (R$)</label>
+  <input type="number" id="valorModulos" step="0.01" min="0" placeholder="0,00">
+  <div style="margin-top:16px; display:flex; gap:10px;">
+    <button class="acao" onclick="calcular(0.10)">Calcular multa de 10%</button>
+    <button class="acao" onclick="calcular(0.20)">Calcular multa de 20%</button>
+  </div>
+  <div id="resultado" class="resultado" style="display:none;"></div>
+</div>
+</div>
+
+<script>""" + BASE_JS + """
+function calcular(percentual) {
+  const valor = parseFloat(document.getElementById('valorModulos').value);
+  const div = document.getElementById('resultado');
+  if (isNaN(valor) || valor < 0) {
+    div.style.display = 'block';
+    div.innerHTML = '<span style="color:var(--danger)">Informe um valor válido.</span>';
+    return;
+  }
+  const multa = valor * percentual;
+  const fmt = (v) => 'R$ ' + v.toFixed(2).replace('.', ',');
+  div.style.display = 'block';
+  div.innerHTML = `Multa de <b>${(percentual * 100).toFixed(0)}%</b> sobre ${fmt(valor)}: <b>${fmt(multa)}</b>`;
+}
 </script></body></html>"""
 
 

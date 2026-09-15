@@ -545,6 +545,57 @@ def teste_texto_divida_prescrita_formata_dias_maximos_corretamente():
     )
 
 
+def teste_divida_abaixo_do_piso_nao_sugere_cobranca():
+    # pedido do Diogenes via Caio (2026-09-14): divida real mas menor que
+    # R$ 377 nao compensa cobranca formal - nao sugere turma de controle
+    # nem advogado. Data ~2,5 anos antes de HOJE: elegivel (>365 dias),
+    # mas nao prescrita (<1825 dias).
+    comentarios = [c("10/01/2024", "TURMA", "-Matricula", "")]
+    a = analisar("ALUNO TESTE 26", "Devedor", 300.0, 0.0, comentarios)
+    relatar(
+        "Caso 26: dívida real abaixo de R$ 377 vira 'abaixo_do_piso_cobranca', sem ação sugerida",
+        a["caso"] == "abaixo_do_piso_cobranca" and a["acao_sugerida"] is None,
+        f"caso={a['caso']!r} acao_sugerida={a['acao_sugerida']} valor_final={a['valor_final']}",
+    )
+    assunto, tipo, texto = rec.montar_comentario_analise(a)
+    relatar(
+        "Caso 26: texto do comentário cita o piso de R$ 377,00 formatado, sem sobrar '{piso}' literal",
+        "{piso}" not in texto and "377,00" in texto,
+        f"texto: {texto!r}",
+    )
+
+
+def teste_divida_no_piso_ou_acima_continua_sugerindo_cobranca_normal():
+    # valor exatamente igual ao piso (377,00) NAO conta como "abaixo" -
+    # so estritamente menor conta.
+    comentarios = [c("10/01/2024", "TURMA", "-Matricula", "")]
+    a_no_piso = analisar("ALUNO TESTE 27", "Devedor", 377.0, 0.0, comentarios)
+    a_acima = analisar("ALUNO TESTE 27", "Devedor", 500.0, 0.0, comentarios)
+    relatar(
+        "Caso 27: dívida exatamente igual ao piso (R$ 377,00) continua sugerindo cobrança normal (devedor_sem_turma)",
+        a_no_piso["caso"] == "devedor_sem_turma" and a_no_piso["acao_sugerida"] is not None,
+        f"caso={a_no_piso['caso']!r} acao_sugerida={a_no_piso['acao_sugerida']}",
+    )
+    relatar(
+        "Caso 27b: dívida acima do piso (R$ 500) continua sugerindo cobrança normal",
+        a_acima["caso"] == "devedor_sem_turma" and a_acima["acao_sugerida"] is not None,
+        f"caso={a_acima['caso']!r} acao_sugerida={a_acima['acao_sugerida']}",
+    )
+
+
+def teste_piso_nao_interfere_em_divida_prescrita_nem_estorno():
+    # o piso so intercepta os casos que sugeririam matricula em turma de
+    # controle - prescricao e estorno continuam com prioridade, mesmo com
+    # valor pequeno.
+    comentarios_antigos = [c("10/01/2018", "TURMA ANTIGA", "-Matricula", "")]
+    a_prescrita = analisar("ALUNO TESTE 28", "Devedor", 300.0, 0.0, comentarios_antigos)
+    relatar(
+        "Caso 28: dívida pequena E prescrita continua caindo em 'divida_prescrita', não em 'abaixo_do_piso_cobranca'",
+        a_prescrita["caso"] == "divida_prescrita",
+        f"caso={a_prescrita['caso']!r}",
+    )
+
+
 def teste_matricula_passa_direto_pra_analise_sem_afetar_decisao():
     # pedido do usuario (2026-09-12): a tela deve mostrar a matricula, nao o
     # id_aluno interno - so exibicao, entao repassar (ou nao passar) a
@@ -593,6 +644,9 @@ def main():
     teste_divida_dentro_do_prazo_nao_vira_prescrita()
     teste_prazo_maximo_ajustavel_pelo_usuario()
     teste_texto_divida_prescrita_formata_dias_maximos_corretamente()
+    teste_divida_abaixo_do_piso_nao_sugere_cobranca()
+    teste_divida_no_piso_ou_acima_continua_sugerindo_cobranca_normal()
+    teste_piso_nao_interfere_em_divida_prescrita_nem_estorno()
     teste_matricula_passa_direto_pra_analise_sem_afetar_decisao()
 
     print(f"\n{'=' * 70}")

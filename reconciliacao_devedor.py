@@ -171,6 +171,14 @@ PRAZO_PADRAO_DIAS = 365  # ~1 ano, regra combinada com o usuario
 # padrao do PRAZO_PADRAO_DIAS/dias_minimos).
 PRAZO_MAXIMO_DIAS = 1825  # 5 anos, prescricao
 
+# Pedido do Diogenes via Caio (2026-09-14): divida real, mas pequena
+# demais, nao compensa o custo de cobranca - abaixo desse valor o sistema
+# nao sugere matricular em turma de controle nem enviar pro advogado (so
+# sinaliza pra conferencia humana). Regra dele foi um valor fixo, nao um
+# percentual - diferente de dias_minimos/dias_maximos, nao e algo que a
+# tela deixa o usuario ajustar por enquanto (nao foi pedido).
+PISO_VALOR_COBRANCA = 377.0
+
 
 def elegivel_por_prazo(vencimento_mais_antigo, data_execucao=None, dias_minimos=PRAZO_PADRAO_DIAS):
     """Aluno e elegivel se o vencimento em aberto mais antigo for de pelo
@@ -408,6 +416,7 @@ def analisar_aluno(client, aluno_bruto, data_execucao=None, dias_minimos=PRAZO_P
     prescrita = divida_prescrita(vencimento, data_execucao, dias_maximos)
     valor_final = perfil["diferenca"]
     deve_de_fato = valor_final > 0
+    abaixo_do_piso_cobranca = deve_de_fato and valor_final < PISO_VALOR_COBRANCA
     convenio = eh_convenio(perfil, comentarios)
     cancelou = houve_cancelamento(comentarios)
     esta_em_controle = aluno_bruto["esta_em_controle"]
@@ -456,6 +465,11 @@ def analisar_aluno(client, aluno_bruto, data_execucao=None, dias_minimos=PRAZO_P
         # explicito do usuario apos essa investigacao, 2026-09-05).
         caso = "possivel_estorno_pendente"
         urgente = True
+    elif abaixo_do_piso_cobranca:
+        # pedido do Diogenes via Caio (2026-09-14): divida real mas menor
+        # que PISO_VALOR_COBRANCA nao compensa cobranca formal - nao
+        # sugere nem turma de controle nem advogado, so sinaliza.
+        caso = "abaixo_do_piso_cobranca"
     elif cancelou:
         caso = "cancelou_mas_ainda_deve"
         acao_sugerida = {"tipo": "matricular_turma", "turma_id": TURMA_DEVEDOR_ID, "turma_nome": "Devedor/Pendência"}
@@ -678,6 +692,11 @@ _TEXTO_CASO = {
         "Devedor/Pendência. Recomenda-se conferir manualmente se o estorno foi feito e corrigir o "
         "cadastro (não cobrar)."
     ),
+    "abaixo_do_piso_cobranca": (
+        "Dívida real, mas abaixo do piso de R$ {piso} definido pelo Diógenes - não compensa o custo "
+        "de cobrança formal (turma de controle ou advogado). Nenhuma ação sugerida automaticamente. "
+        "Fica só sinalizado pra conferência - se o valor mudar ou for reavaliado, roda a análise de novo."
+    ),
 }
 
 
@@ -701,6 +720,9 @@ def montar_comentario_analise(analise):
         texto_caso = _TEXTO_CASO[analise["caso"]]
         if analise["caso"] == "divida_prescrita":
             texto_caso = texto_caso.format(dias_maximos=analise.get("dias_maximos", PRAZO_MAXIMO_DIAS))
+        if analise["caso"] == "abaixo_do_piso_cobranca":
+            piso_fmt = f"{PISO_VALOR_COBRANCA:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            texto_caso = texto_caso.format(piso=piso_fmt)
         if analise["caso"] == "possivel_estorno_pendente" and analise.get("referencia_estorno"):
             texto_caso += f" Comentário que menciona estorno: \"{analise['referencia_estorno']}\"."
     # Formatacao pedida pelo usuario (2026-09-08): o Fuctura renderiza <br>
