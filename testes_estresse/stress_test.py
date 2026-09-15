@@ -213,6 +213,49 @@ def cenario_vazamento_sessao(n=200):
         print("  cresce sem limite enquanto o servidor roda. Ver resumo no memory/relatório.")
 
 
+def cenario_login_continua_visivel_em_manutencao():
+    """Achado real 2026-09-15 (bug critico relatado pelo usuario): "/"
+    caia no bloqueio generico de manutencao mesmo sem sessao nenhuma -
+    ou seja, uma vez deslogado (ou a sessao expirada) com a manutencao ja
+    ativa, nao tinha como ver o FORMULARIO de login pra digitar a
+    credencial de operador e desativar. Usa manutencao.py direto (sem
+    precisar de credencial de operador de verdade) so pra ligar o modo,
+    testar, e sempre desligar de novo no final (try/finally - nao pode
+    deixar o estado ligado mesmo se o teste falhar)."""
+    import manutencao
+    # sessao normal precisa existir ANTES de ligar a manutencao - login
+    # comum fica bloqueado enquanto ela estiver ativa (nao daria pra criar
+    # essa sessao depois).
+    sid_normal = login("081100000000")
+    manutencao.ativar(por="teste_stress", motivo="regressao automatizada")
+    try:
+        r = requests.get(_url("/"))
+        pagina_de_login = "Sistema Fuctura" in r.text and "<form" in r.text.lower()
+        relatar(
+            "Cenário 6: GET / sem sessão continua mostrando a página de login mesmo com manutenção ativa",
+            r.status_code == 200 and pagina_de_login,
+            f"status={r.status_code}, parece pagina de login={pagina_de_login}",
+        )
+
+        # uma sessao NORMAL (nao-operador), ja existente ANTES da manutencao
+        # ligar, continua bloqueada batendo em "/" - o bypass e so pra quem
+        # nao tem sessao nenhuma, nao vira acesso livre.
+        r2 = requests.get(_url("/"), cookies={"sessao": sid_normal} if sid_normal else {})
+        relatar(
+            "Cenário 6b: sessão normal (não-operador) continua bloqueada (503) em manutenção, mesmo em /",
+            sid_normal is not None and r2.status_code == 503,
+            f"sid_normal obtido={sid_normal is not None}, status={r2.status_code}",
+        )
+    finally:
+        manutencao.desativar(por="teste_stress")
+        ainda_ativo = manutencao.em_manutencao()
+        relatar(
+            "Cenário 6c: manutenção desativada com sucesso ao final do teste (limpeza)",
+            not ainda_ativo,
+            f"em_manutencao()={ainda_ativo}",
+        )
+
+
 def main():
     print("Subindo Fuctura falso + sistema-mascara real (portas de teste isoladas, nada toca produção)...")
     subir_tudo()
@@ -223,6 +266,7 @@ def main():
     cenario_logins_concorrentes()
     cenario_input_adversarial()
     cenario_vazamento_sessao()
+    cenario_login_continua_visivel_em_manutencao()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

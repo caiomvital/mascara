@@ -1066,7 +1066,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # modo manutencao ativo: quem nao e operador ve a pagina generica.
-        if manutencao.em_manutencao() and not eh_manut and parsed.path != "/api/logout":
+        # ACHADO REAL 2026-09-15 (bug critico relatado pelo usuario): "/"
+        # tambem caia nesse bloqueio quando nao havia sessao - ou seja,
+        # depois de deslogar (ou a sessao expirar) com a manutencao ja
+        # ativa, NAO HAVIA COMO VER O FORMULARIO DE LOGIN pra digitar a
+        # credencial de operador e desativar. O POST /api/login sempre
+        # processou credencial de operador corretamente mesmo em
+        # manutencao (ver _do_POST_impl) - faltava so conseguir chegar
+        # ate a pagina que tem o formulario. Excecao: "/" sem sessao
+        # nenhuma sempre mostra o login, mesmo em manutencao - uma sessao
+        # NORMAL (nao-operador) ainda cai no bloqueio de qualquer jeito
+        # (nao ganha acesso real ao sistema so por bater em "/").
+        pode_ver_login = parsed.path == "/" and not sessao
+        if manutencao.em_manutencao() and not eh_manut and parsed.path != "/api/logout" and not pode_ver_login:
             self._send_html(pagina_em_manutencao(), status=503)
             return
 
