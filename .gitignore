@@ -5,6 +5,7 @@ NOTAS_PRIVADAS.md
 manutencao.json
 config.json
 gmail_tokens.json
+drive_token.json
 __pycache__/
 *.pyc
 *_progresso.json

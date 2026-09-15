@@ -23,6 +23,7 @@ from urllib.parse import urlparse, parse_qs
 import anexos_email
 import config_store
 import cora_client
+import drive_client
 import email_cobranca
 import gmail_client
 import manutencao
@@ -159,6 +160,7 @@ sessions = {}          # session_id -> {"login":, "client":, "is_admin":}
 fechamento_jobs = {}    # job_id -> dados da extracao em andamento
 reconciliacao_jobs = {}  # job_id -> {"acoes_pendentes": {id_aluno: analise}}
 gmail_estados_pendentes = {}  # state (CSRF do OAuth) -> session_id, ver /api/gmail/autorizar
+drive_estados_pendentes = {}  # idem, pra /api/drive/autorizar
 
 # Achado real via teste de estresse (2026-09-06), corrigido em 2026-09-08:
 # nenhum dos 3 dicionarios acima tinha expiracao - so saiam de la com
@@ -1393,6 +1395,106 @@ class Handler(BaseHTTPRequestHandler):
             self._redirect("/reconciliacao")
             return
 
+        if parsed.path == "/api/drive/status":
+            if not sessao["is_admin"]:
+                self._send_json({"erro": "restrito"}, 403)
+                return
+            dcfg = config_store.carregar().get("drive", {})
+            gcfg = config_store.carregar().get("gmail", {})
+            self._send_json({
+                "configurado": bool(dcfg.get("configurado") and gcfg.get("client_id")),
+                "conectado": drive_client.conectado(),
+                "email_conectado": drive_client.email_conectado(),
+            })
+            return
+
+        if parsed.path == "/api/drive/autorizar":
+            if not sessao["is_admin"]:
+                self._send_html("<p>Acesso restrito a administradores.</p>")
+                return
+            gcfg = config_store.carregar().get("gmail", {})
+            if not gcfg.get("client_id"):
+                self._send_html("<p>Configure o Client ID/Secret do Gmail primeiro (mesma credencial é reaproveitada pro Drive). <a href='/admin'>Ir pra Configurações</a></p>")
+                return
+            cookie = self.headers.get("Cookie", "")
+            m = re.search(r"sessao=([a-f0-9]+)", cookie)
+            sid = m.group(1) if m else None
+            estado = novo_id()
+            drive_estados_pendentes[estado] = sid
+            self._redirect(drive_client.montar_url_autorizacao(gcfg["client_id"], estado))
+            return
+
+        if parsed.path == "/api/drive/callback":
+            qs = parse_qs(parsed.query)
+            erro_google = qs.get("error", [""])[0]
+            if erro_google:
+                self._send_html(f"<p>Autorização cancelada ou negada pelo Google: {erro_google}. <a href='/admin'>Voltar</a></p>")
+                return
+            code = qs.get("code", [""])[0]
+            estado = qs.get("state", [""])[0]
+            sid_esperado = drive_estados_pendentes.pop(estado, None)
+            cookie = self.headers.get("Cookie", "")
+            m = re.search(r"sessao=([a-f0-9]+)", cookie)
+            sid_atual = m.group(1) if m else None
+            if not estado or not sid_esperado or sid_esperado != sid_atual:
+                self._send_html("<p>Não foi possível confirmar a autorização (sessão inválida ou expirada). Tente conectar de novo. <a href='/admin'>Voltar</a></p>")
+                return
+            sessao_atual = sessions.get(sid_atual)
+            if not sessao_atual or not sessao_atual.get("is_admin"):
+                self._send_html("<p>Acesso restrito a administradores.</p>")
+                return
+            gcfg = config_store.carregar().get("gmail", {})
+            try:
+                tokens = drive_client.trocar_code_por_tokens(gcfg["client_id"], gcfg["client_secret"], code)
+            except Exception as e:
+                self._send_html(f"<p>Erro trocando o código de autorização com o Google: {e}. <a href='/admin'>Voltar</a></p>")
+                return
+            refresh_token = tokens.get("refresh_token")
+            if not refresh_token:
+                self._send_html(
+                    "<p>O Google não devolveu uma autorização permanente (refresh_token). "
+                    "Tente remover o acesso do sistema em <a href='https://myaccount.google.com/permissions' target='_blank'>"
+                    "myaccount.google.com/permissions</a> e conectar de novo. <a href='/admin'>Voltar</a></p>"
+                )
+                return
+            email = drive_client.descobrir_email(tokens["access_token"])
+            drive_client.salvar_conexao(refresh_token, email, sessao_atual["login"])
+            self._redirect("/admin")
+            return
+
+        if parsed.path == "/api/drive/pastas":
+            if not sessao["is_admin"]:
+                self._send_json({"erro": "restrito"}, 403)
+                return
+            nome = parse_qs(parsed.query).get("nome", [""])[0]
+            if not nome:
+                self._send_json({"erro": "Informe ?nome="}, 400)
+                return
+            gcfg = config_store.carregar().get("gmail", {})
+            try:
+                pastas = drive_client.listar_pastas_por_nome(gcfg["client_id"], gcfg["client_secret"], nome)
+                self._send_json({"pastas": pastas})
+            except drive_client.DriveNaoConectadoError as e:
+                self._send_json({"erro": str(e)}, 400)
+            except Exception as e:
+                self._send_json({"erro": str(e)}, 500)
+            return
+
+        if parsed.path.startswith("/api/drive/pasta/") and parsed.path.endswith("/arquivos"):
+            if not sessao["is_admin"]:
+                self._send_json({"erro": "restrito"}, 403)
+                return
+            id_pasta = parsed.path.split("/")[4]
+            gcfg = config_store.carregar().get("gmail", {})
+            try:
+                arquivos = drive_client.listar_arquivos_da_pasta(gcfg["client_id"], gcfg["client_secret"], id_pasta)
+                self._send_json({"arquivos": arquivos})
+            except drive_client.DriveNaoConectadoError as e:
+                self._send_json({"erro": str(e)}, 400)
+            except Exception as e:
+                self._send_json({"erro": str(e)}, 500)
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -1624,6 +1726,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/gmail/desconectar":
             gmail_client.desconectar(sessao["login"])
+            self._send_json({"ok": True})
+            return
+
+        if parsed.path == "/api/drive/desconectar":
+            if not sessao["is_admin"]:
+                self._send_json({"erro": "restrito"}, 403)
+                return
+            drive_client.desconectar()
             self._send_json({"ok": True})
             return
 
@@ -4724,6 +4834,21 @@ async function carregar() {
       </div>
     </div>
     <div class="card">
+      <b>Drive (buscar contrato/ata em pastas compartilhadas)</b>
+      <div class="nota">
+        Reaproveita a MESMA credencial do Gmail acima (só precisa adicionar o escopo
+        <code>drive.readonly</code> na Tela de Consentimento OAuth) — não precisa de Client ID/Secret próprios.
+        Diferente do Gmail: essa é <b>uma conexão só</b>, de quem tem as pastas Contratos/Atas compartilhadas
+        no próprio Drive — não é por funcionário. URI de redirecionamento a cadastrar no Google Cloud Console:
+        <code>https://sistema-mascara.69-169-102-111.sslip.io/api/drive/callback</code>
+      </div>
+      <div id="drive_status" style="margin-top:10px;">Carregando status...</div>
+      <div class="checkbox-linha" style="margin-top:8px;">
+        <input type="checkbox" id="drive_configurado" ${cfg.drive.configurado ? 'checked' : ''}>
+        <label for="drive_configurado" style="margin:0;">Marcar como configurado (só depois do escopo estar na Tela de Consentimento)</label>
+      </div>
+    </div>
+    <div class="card">
       <label>Quem tem acesso a esta tela (um por linha) — pode ser o login numérico do Fuctura OU o nome que aparece no menu ao logar (ex: "Diogenes")</label>
       <textarea id="admins" rows="4" style="width:100%; font-family:monospace;">${cfg.admins.join('\\n')}</textarea>
       <div class="nota">Comparação por nome ignora acento/maiúscula e aceita nome parcial (ex: "Diogenes" cobre "Diógenes Souza Leão").</div>
@@ -4732,6 +4857,26 @@ async function carregar() {
     <span id="msg"></span>
   `;
   window._cfg = cfg;
+  carregarStatusDrive();
+}
+
+async function carregarStatusDrive() {
+  const div = document.getElementById('drive_status');
+  const r = await fetch('/api/drive/status');
+  const s = await r.json();
+  if (!s.configurado) {
+    div.innerHTML = '<span class="fonte">Marque "configurado" abaixo depois de adicionar o escopo do Drive na credencial.</span>';
+  } else if (!s.conectado) {
+    div.innerHTML = '<a class="btn-nao" style="text-decoration:none; display:inline-block;" href="/api/drive/autorizar">Conectar o Drive</a>';
+  } else {
+    div.innerHTML = `<span style="color:var(--success)">Conectado como ${s.email_conectado}</span> ` +
+      '<button class="btn-nao" onclick="desconectarDrive()">Desconectar</button>';
+  }
+}
+
+async function desconectarDrive() {
+  await fetch('/api/drive/desconectar', {method: 'POST'});
+  carregarStatusDrive();
 }
 
 async function salvar() {
@@ -4754,6 +4899,9 @@ async function salvar() {
     client_id: document.getElementById('gmail_client_id').value.trim(),
     client_secret: document.getElementById('gmail_client_secret').value.trim(),
     configurado: document.getElementById('gmail_configurado').checked,
+  };
+  cfg.drive = {
+    configurado: document.getElementById('drive_configurado').checked,
   };
   const r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
   document.getElementById('msg').textContent = r.ok ? ' Salvo.' : ' Erro ao salvar.';

@@ -22,7 +22,12 @@ Console - nao automatizavel por aqui):
      - NUNCA le a caixa de entrada) + escopo de email (pra mostrar qual
      conta esta conectada), e adicionar cada funcionario como "usuário
      de teste" (ate 100, sem precisar de verificacao do Google - o app
-     fica em modo "Testes" pra sempre, sem problema pra uso interno)
+     fica em modo "Testes" pra sempre, sem problema pra uso interno).
+     Se for usar tambem a busca de contrato/ata no Drive (ver
+     drive_client.py), adicione JA AQUI o escopo
+     https://www.googleapis.com/auth/drive.readonly - evita ter que
+     voltar nessa tela depois (mesma credencial, so precisa ter os dois
+     escopos declarados de uma vez).
   4. Criar uma credencial ("APIs e serviços" > "Credenciais" > "Criar
      credenciais" > "ID do cliente OAuth"), tipo "Aplicativo da Web",
      com REDIRECT_URI (abaixo) na lista de URIs de redirecionamento
@@ -39,14 +44,17 @@ import time
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from urllib.parse import urlencode
 
 import requests
 
-URL_AUTORIZACAO = "https://accounts.google.com/o/oauth2/v2/auth"
-URL_TOKEN = "https://oauth2.googleapis.com/token"
+import google_oauth
+
+# re-exportados por compatibilidade (codigo/testes existentes referenciam
+# gmail_client.URL_AUTORIZACAO) - a fonte de verdade agora e google_oauth.py
+URL_AUTORIZACAO = google_oauth.URL_AUTORIZACAO
+URL_TOKEN = google_oauth.URL_TOKEN
 URL_DRAFTS = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
-URL_USERINFO = "https://www.googleapis.com/oauth2/v2/userinfo"
+URL_USERINFO = google_oauth.URL_USERINFO
 
 # gmail.compose: so cria/edita/envia rascunho - NUNCA da acesso de
 # leitura a caixa de entrada. userinfo.email: so pra mostrar ao
@@ -82,47 +90,15 @@ def _salvar_tokens(tokens):
 
 
 def montar_url_autorizacao(client_id, state):
-    params = {
-        "client_id": client_id,
-        "redirect_uri": REDIRECT_URI,
-        "response_type": "code",
-        "scope": ESCOPO,
-        "access_type": "offline",
-        # "consent" forca o Google a devolver refresh_token sempre -
-        # sem isso, numa segunda autorizacao do mesmo funcionario o
-        # Google as vezes omite o refresh_token (assume que o app ja
-        # tem um salvo, o que nem sempre e verdade do nosso lado).
-        "prompt": "consent",
-        "state": state,
-    }
-    return f"{URL_AUTORIZACAO}?{urlencode(params)}"
+    return google_oauth.montar_url_autorizacao(client_id, REDIRECT_URI, ESCOPO, state)
 
 
 def trocar_code_por_tokens(client_id, client_secret, code):
-    r = requests.post(URL_TOKEN, data={
-        "client_id": client_id, "client_secret": client_secret,
-        "code": code, "redirect_uri": REDIRECT_URI, "grant_type": "authorization_code",
-    }, timeout=15)
-    r.raise_for_status()
-    return r.json()  # {access_token, refresh_token, expires_in, ...}
+    return google_oauth.trocar_code_por_tokens(client_id, client_secret, code, REDIRECT_URI)
 
 
 def descobrir_email(access_token):
-    try:
-        r = requests.get(URL_USERINFO, headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
-        r.raise_for_status()
-        return r.json().get("email", "")
-    except requests.exceptions.RequestException:
-        return ""
-
-
-def _renovar_access_token(client_id, client_secret, refresh_token):
-    r = requests.post(URL_TOKEN, data={
-        "client_id": client_id, "client_secret": client_secret,
-        "refresh_token": refresh_token, "grant_type": "refresh_token",
-    }, timeout=15)
-    r.raise_for_status()
-    return r.json()["access_token"]
+    return google_oauth.descobrir_email(access_token)
 
 
 def conectado(login):
@@ -150,7 +126,7 @@ def _access_token_para(login, client_id, client_secret):
     dados = _carregar_tokens().get(login)
     if not dados:
         raise GmailNaoConectadoError("Você ainda não conectou sua conta do Gmail.")
-    return _renovar_access_token(client_id, client_secret, dados["refresh_token"])
+    return google_oauth.renovar_access_token(client_id, client_secret, dados["refresh_token"])
 
 
 def montar_mime_base64url(destinatario, assunto, corpo_texto, anexos):

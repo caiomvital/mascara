@@ -44,6 +44,14 @@ DEFAULT_CONFIG = {
         "configurado": False,
         "client_id": "", "client_secret": "",
     },
+    # Drive (buscar contrato/ata em pastas compartilhadas - pedido do
+    # usuario 2026-09-15). Reaproveita client_id/client_secret do
+    # "gmail" acima (mesma credencial OAuth, so precisa do escopo do
+    # Drive adicionado na Tela de Consentimento) - por isso nao tem
+    # client_id/secret proprios aqui, so o status. Conexao UNICA (de
+    # quem tiver as pastas compartilhadas), nao por funcionario - ver
+    # drive_client.py.
+    "drive": {"configurado": False},
 }
 
 _lock = threading.RLock()  # reentrante: carregar() pode chamar salvar() ainda segurando o lock
