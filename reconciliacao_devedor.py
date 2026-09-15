@@ -376,6 +376,37 @@ def resumir_comentarios(comentarios, max_chars=220):
     return " ".join(partes)
 
 
+def data_ultimo_pagamento(comentarios):
+    """Data (string DD/MM/AAAA) do comentário '-Pagamento Realizado' mais
+    recente, ou None se nunca houve nenhum - mesmo filtro usado dentro de
+    resumir_comentarios(), fatorado aqui pra reaproveitar em
+    relatorios_pdf.py sem precisar reprocessar o texto do resumo."""
+    import fechamento_logic as logic
+    pagamentos = [c for c in comentarios if "pagamento realizado" in logic.norm(c["tipo"])]
+    return pagamentos[-1]["data"] if pagamentos else None
+
+
+def data_ultimo_contato(comentarios):
+    """Data (string DD/MM/AAAA) da 'Ocorrência de Contato' mais recente
+    (ver _registrar_contato/registrarContato em app.py - grava tipo '3'
+    com esse título exato), ou None se nenhum contato foi registrado
+    ainda."""
+    contatos = [c for c in comentarios if c["titulo"] == "Ocorrência de Contato"]
+    return contatos[-1]["data"] if contatos else None
+
+
+def dias_em_aberto(vencimento_mais_antigo, data_execucao=None):
+    """Dias corridos entre o vencimento em aberto mais antigo e a data de
+    execução - mesma conta usada internamente por elegivel_por_prazo()/
+    divida_prescrita(), exposta aqui pra exibição em relatório (não pra
+    decisão). None se não há vencimento conhecido (fonte_vencimento ==
+    'sem_dado')."""
+    if vencimento_mais_antigo is None:
+        return None
+    data_execucao = data_execucao or datetime.now()
+    return (data_execucao - vencimento_mais_antigo).days
+
+
 _FONTE_LABEL = {
     "comentario_vencimento": "vencimento mencionado em comentário",
     "gerar_boletos": "data do comentário de geração de boletos",
@@ -490,6 +521,8 @@ def analisar_aluno(client, aluno_bruto, data_execucao=None, dias_minimos=PRAZO_P
         "resumo_comentarios": resumo_comentarios,
         "data_analise_anterior": data_analise_anterior,
         "possivel_estorno_pendente": tem_estorno, "referencia_estorno": ref_estorno,
+        "ultimo_pagamento": data_ultimo_pagamento(comentarios),
+        "ultimo_contato": data_ultimo_contato(comentarios),
     }
 
 

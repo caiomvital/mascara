@@ -30,6 +30,7 @@ import manutencao
 import fechamento_logic as logic
 import pdf_utils
 import reconciliacao_devedor as reconciliacao
+import relatorios_pdf
 import vision_providers as vision
 from fuctura_client import FucturaClient, FucturaAuthError, TURMA_DEVEDOR_ID, TURMA_ADVOGADO_ID, STATUS_ALUNO, TIPO_COMENTARIO, FORMA_PAGAMENTO
 
@@ -1495,6 +1496,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"erro": str(e)}, 500)
             return
 
+        if parsed.path.startswith("/api/reconciliacao/") and parsed.path.endswith("/pdf/devedores"):
+            job_id = parsed.path.split("/")[3]
+            self._pdf_devedores_reconciliacao(job_id)
+            return
+
+        if parsed.path.startswith("/api/reconciliacao/") and parsed.path.endswith("/pdf/fechamento"):
+            job_id = parsed.path.split("/")[3]
+            periodo_label = parse_qs(parsed.query).get("periodo", [""])[0]
+            self._pdf_fechamento_reconciliacao(job_id, periodo_label)
+            return
+
+        if parsed.path.startswith("/api/reconciliacao/") and "/pdf/individual/" in parsed.path:
+            partes = parsed.path.split("/")
+            job_id, id_aluno = partes[3], partes[6]
+            self._pdf_individual_reconciliacao(sessao, job_id, id_aluno)
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -2045,6 +2063,14 @@ class Handler(BaseHTTPRequestHandler):
             _limpar_expirados(reconciliacao_jobs, JOB_TTL_SEGUNDOS)
             reconciliacao_jobs[job_id] = {
                 "analises": {a["id_aluno"]: a for a in itens},
+                # completo (INCLUI "nao_elegivel"), guardado a parte pro
+                # Relatório de Fechamento (pedido do Diógenes, 2026-09-15) -
+                # esse relatório precisa do universo TODO analisado (pra
+                # "sem dívida em aberto no momento" bater certo), não só do
+                # subconjunto "com algo pra decidir" que a tela mostra.
+                "todas_analises": resultado["analises"],
+                "resumo_por_caso": resultado["resumo_por_caso"],
+                "total_analisados": resultado["total_analisados"],
                 "criado_em": datetime.now().isoformat(),
             }
 
@@ -2110,6 +2136,54 @@ class Handler(BaseHTTPRequestHandler):
         try:
             sucesso, descricao = reconciliacao.aplicar_acao(sessao["client"], analise)
             self._send_json({"ok": sucesso, "descricao": descricao})
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _pdf_devedores_reconciliacao(self, job_id):
+        """Relatório de Devedores (pedido do Diógenes, item 9 da
+        transcrição 2026-09-14) - SEMPRE a partir de uma análise já
+        rodada (job_id de /api/reconciliacao/iniciar), nunca busca dado
+        novo sozinho (pedido explícito dele, item 10: PDF é consequência
+        da análise, não um botão solto)."""
+        job = reconciliacao_jobs.get(job_id)
+        if not job:
+            self._send_json({"erro": "sessão de reconciliação não encontrada (pode ter expirado - rode a análise de novo)"}, 404)
+            return
+        try:
+            pdf = relatorios_pdf.gerar_pdf_devedores(list(job["analises"].values()))
+            self._send_pdf(pdf, "relatorio_devedores.pdf")
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _pdf_fechamento_reconciliacao(self, job_id, periodo_label):
+        job = reconciliacao_jobs.get(job_id)
+        if not job:
+            self._send_json({"erro": "sessão de reconciliação não encontrada (pode ter expirado - rode a análise de novo)"}, 404)
+            return
+        try:
+            resultado = {
+                "total_analisados": job["total_analisados"],
+                "resumo_por_caso": job["resumo_por_caso"],
+                "analises": job["todas_analises"],
+            }
+            pdf = relatorios_pdf.gerar_pdf_fechamento(resultado, periodo_label=periodo_label)
+            self._send_pdf(pdf, "relatorio_fechamento.pdf")
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _pdf_individual_reconciliacao(self, sessao, job_id, id_aluno):
+        job = reconciliacao_jobs.get(job_id)
+        if not job:
+            self._send_json({"erro": "sessão de reconciliação não encontrada (pode ter expirado - rode a análise de novo)"}, 404)
+            return
+        analise = job["analises"].get(id_aluno) or next((a for a in job["todas_analises"] if a["id_aluno"] == id_aluno), None)
+        if not analise:
+            self._send_json({"erro": "aluno não encontrado nesta sessão"}, 404)
+            return
+        try:
+            comentarios = sessao["client"].comentarios_aluno(id_aluno)
+            pdf = relatorios_pdf.gerar_pdf_individual(analise, comentarios)
+            self._send_pdf(pdf, f"relatorio_individual_{id_aluno}.pdf")
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
 
@@ -3041,7 +3115,17 @@ async function iniciar() {
   const resumoDiv = document.getElementById('resumo');
   resumoDiv.style.display = 'block';
   let linhasResumo = Object.entries(d.resumo_por_caso).map(([caso, qtd]) => `${caso}: ${qtd}`).join('<br>');
-  resumoDiv.innerHTML = `<b>Total analisado: ${d.total_analisados}</b><br>${linhasResumo}`;
+  resumoDiv.innerHTML = `
+    <b>Total analisado: ${d.total_analisados}</b><br>${linhasResumo}
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+      <b>Relatórios em PDF</b> (a partir desta análise que acabou de rodar)
+      <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <a class="btn-nao" style="text-decoration:none; display:inline-block;" href="/api/reconciliacao/${jobAtual}/pdf/devedores" target="_blank">Relatório de Devedores (PDF)</a>
+        <input type="text" id="periodoFechamento" placeholder="Período (opcional, ex: Setembro/2026)" style="max-width:220px;">
+        <a class="btn-nao" style="text-decoration:none; display:inline-block;" href="#" onclick="abrirFechamentoPdf(); return false;">Relatório de Fechamento (PDF)</a>
+      </div>
+    </div>
+  `;
 
   const lista = document.getElementById('listaAcoes');
   if (!d.itens.length) {
@@ -3065,6 +3149,7 @@ async function iniciar() {
       <button class="btn-nao" onclick="verBoletosCora('${a.id_aluno}')">Ver boletos em aberto (CORA)</button>
       <button class="btn-nao" onclick="verPreviaEmail('${a.id_aluno}')">Ver prévia do e-mail</button>
       <button class="btn-nao" onclick="toggleContato('${a.id_aluno}')">Registrar contato</button>
+      <a class="btn-nao" style="text-decoration:none; display:inline-block;" href="/api/reconciliacao/${jobAtual}/pdf/individual/${a.id_aluno}" target="_blank">Relatório Individual (PDF)</a>
       <div id="msg-${a.id_aluno}"></div>
       <div id="cora-${a.id_aluno}" class="fonte" style="margin-top:8px;"></div>
       <div id="email-${a.id_aluno}" style="margin-top:8px;"></div>
@@ -3101,6 +3186,12 @@ function descreverAcao(acao) {
   if (acao.tipo === 'mudar_status') return `Mudar Situação para ${acao.novo_status_nome}`;
   if (acao.tipo === 'matricular_turma') return `Matricular em ${acao.turma_nome}`;
   return acao.tipo;
+}
+
+function abrirFechamentoPdf() {
+  const periodo = document.getElementById('periodoFechamento').value.trim();
+  const url = `/api/reconciliacao/${jobAtual}/pdf/fechamento` + (periodo ? `?periodo=${encodeURIComponent(periodo)}` : '');
+  window.open(url, '_blank');
 }
 
 async function gravarComentario(idAluno, ignorarAnaliseAnterior) {
