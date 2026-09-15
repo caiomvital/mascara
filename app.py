@@ -20,9 +20,11 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import anexos_email
 import config_store
 import cora_client
 import email_cobranca
+import gmail_client
 import manutencao
 import fechamento_logic as logic
 import pdf_utils
@@ -156,6 +158,7 @@ def _validar_limites_cadastro(dados):
 sessions = {}          # session_id -> {"login":, "client":, "is_admin":}
 fechamento_jobs = {}    # job_id -> dados da extracao em andamento
 reconciliacao_jobs = {}  # job_id -> {"acoes_pendentes": {id_aluno: analise}}
+gmail_estados_pendentes = {}  # state (CSRF do OAuth) -> session_id, ver /api/gmail/autorizar
 
 # Achado real via teste de estresse (2026-09-06), corrigido em 2026-09-08:
 # nenhum dos 3 dicionarios acima tinha expiracao - so saiam de la com
@@ -1330,6 +1333,66 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(cfg)
             return
 
+        if parsed.path == "/api/gmail/status":
+            gcfg = config_store.carregar().get("gmail", {})
+            self._send_json({
+                "configurado": bool(gcfg.get("configurado") and gcfg.get("client_id")),
+                "conectado": gmail_client.conectado(sessao["login"]),
+                "email_conectado": gmail_client.email_conectado(sessao["login"]),
+            })
+            return
+
+        if parsed.path == "/api/gmail/autorizar":
+            gcfg = config_store.carregar().get("gmail", {})
+            if not gcfg.get("configurado") or not gcfg.get("client_id"):
+                self._send_html("<p>O Gmail ainda não foi configurado pelo administrador (ver tela de Configurações). <a href='/reconciliacao'>Voltar</a></p>")
+                return
+            cookie = self.headers.get("Cookie", "")
+            m = re.search(r"sessao=([a-f0-9]+)", cookie)
+            sid = m.group(1) if m else None
+            estado = novo_id()
+            gmail_estados_pendentes[estado] = sid
+            self._redirect(gmail_client.montar_url_autorizacao(gcfg["client_id"], estado))
+            return
+
+        if parsed.path == "/api/gmail/callback":
+            qs = parse_qs(parsed.query)
+            erro_google = qs.get("error", [""])[0]
+            if erro_google:
+                self._send_html(f"<p>Autorização cancelada ou negada pelo Google: {erro_google}. <a href='/reconciliacao'>Voltar</a></p>")
+                return
+            code = qs.get("code", [""])[0]
+            estado = qs.get("state", [""])[0]
+            sid_esperado = gmail_estados_pendentes.pop(estado, None)
+            cookie = self.headers.get("Cookie", "")
+            m = re.search(r"sessao=([a-f0-9]+)", cookie)
+            sid_atual = m.group(1) if m else None
+            if not estado or not sid_esperado or sid_esperado != sid_atual:
+                self._send_html("<p>Não foi possível confirmar a autorização (sessão inválida ou expirada). Tente conectar de novo. <a href='/reconciliacao'>Voltar</a></p>")
+                return
+            sessao_atual = sessions.get(sid_atual)
+            if not sessao_atual:
+                self._send_html("<p>Sessão expirada. Faça login de novo e tente conectar o Gmail outra vez.</p>")
+                return
+            gcfg = config_store.carregar().get("gmail", {})
+            try:
+                tokens = gmail_client.trocar_code_por_tokens(gcfg["client_id"], gcfg["client_secret"], code)
+            except Exception as e:
+                self._send_html(f"<p>Erro trocando o código de autorização com o Google: {e}. <a href='/reconciliacao'>Voltar</a></p>")
+                return
+            refresh_token = tokens.get("refresh_token")
+            if not refresh_token:
+                self._send_html(
+                    "<p>O Google não devolveu uma autorização permanente (refresh_token). "
+                    "Tente remover o acesso do sistema em <a href='https://myaccount.google.com/permissions' target='_blank'>"
+                    "myaccount.google.com/permissions</a> e conectar de novo. <a href='/reconciliacao'>Voltar</a></p>"
+                )
+                return
+            email = gmail_client.descobrir_email(tokens["access_token"])
+            gmail_client.salvar_conexao(sessao_atual["login"], refresh_token, email)
+            self._redirect("/reconciliacao")
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -1550,6 +1613,18 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             self._registrar_pagamento(sessao, id_aluno, body)
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/rascunho-gmail"):
+            id_aluno = parsed.path.split("/")[3]
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            self._criar_rascunho_gmail(sessao, id_aluno, body)
+            return
+
+        if parsed.path == "/api/gmail/desconectar":
+            gmail_client.desconectar(sessao["login"])
+            self._send_json({"ok": True})
             return
 
         self.send_response(404)
@@ -2250,6 +2325,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
                 return
             self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _criar_rascunho_gmail(self, sessao, id_aluno, body):
+        """Cria um rascunho DE VERDADE no Gmail do funcionario (via API,
+        OAuth ja autorizado por ele) - pedido do usuario (2026-09-15):
+        o link tipo wa.me (abrirNoGmail, ver JS) nao carrega anexo
+        (limitacao do proprio navegador); esta versao passa pela
+        autorizacao real do Gmail e por isso PODE anexar de verdade.
+
+        assunto/corpo vem prontos do frontend (mesmo texto que
+        abrirNoGmail ja monta, sem duplicar a logica de formatacao em
+        Python) - os anexos (contrato + atas) sao buscados aqui, de
+        novo, direto do Fuctura/disco via anexos_email.montar_anexos_aluno
+        (a mesma fonte que a previa do email ja usa) - nunca confia em
+        bytes vindos do navegador."""
+        assunto = _texto(body.get("assunto"))
+        corpo = _texto(body.get("corpo"))
+        if not assunto or not corpo:
+            self._send_json({"erro": "Assunto e corpo são obrigatórios."}, 400)
+            return
+
+        gcfg = config_store.carregar().get("gmail", {})
+        if not gcfg.get("configurado") or not gcfg.get("client_id"):
+            self._send_json({"erro": "Gmail ainda não foi configurado pelo administrador."}, 400)
+            return
+
+        try:
+            resultado_anexos = anexos_email.montar_anexos_aluno(sessao["client"], id_aluno)
+            draft_id = gmail_client.criar_rascunho(
+                sessao["login"], gcfg["client_id"], gcfg["client_secret"],
+                destinatario="", assunto=assunto, corpo_texto=corpo,
+                anexos=resultado_anexos["anexos"],
+            )
+            self._send_json({
+                "ok": True, "draft_id": draft_id,
+                "quantidade_anexos": len(resultado_anexos["anexos"]),
+                "avisos_anexos": resultado_anexos["avisos"],
+            })
+        except gmail_client.GmailNaoConectadoError as e:
+            self._send_json({"erro": str(e), "precisa_conectar": True}, 400)
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
 
@@ -2985,6 +3101,9 @@ async function verPreviaEmail(idAluno) {
       <button class="btn-nao" onclick="abrirNoGmail('${idAluno}')">Abrir rascunho no Gmail</button>
       <div class="fonte" style="margin-top:4px;">Abre o Gmail com assunto e corpo já preenchidos — falta só completar o destinatário (endereço do advogado, ainda pendente) e anexar os arquivos manualmente (o link não carrega anexo). Nada é enviado sozinho.</div>
 
+      <div id="gmail-anexo-area-${idAluno}" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">Verificando conexão com o Gmail...</div>
+      <div id="gmail-anexo-msg-${idAluno}" style="margin-top:6px;"></div>
+
       <b style="display:block; margin-top:14px;">Dados do aluno</b>
       <table style="margin-top:6px;">
         ${d.dados_pessoais.map(c => `<tr><th>${c.rotulo}</th><td>${c.valor}</td></tr>`).join('')}
@@ -3015,24 +3134,36 @@ async function verPreviaEmail(idAluno) {
       ${d.avisos_anexos.length ? `<div class="fonte" style="margin-top:6px; color:var(--warning);">${d.avisos_anexos.map(a => '⚠ ' + a).join('<br>')}</div>` : ''}
     </div>
   `;
+  renderizarAreaGmailAnexo(idAluno);
 }
 
-// "Abrir no Gmail" (pedido do usuario, 2026-09-15: "algo como o wa.me,
-// mas pro Gmail") - o Gmail tem uma URL de composicao que abre o rascunho
-// JA PREENCHIDO (assunto + corpo) numa aba, sem enviar nada sozinho -
-// mesmo espirito do link wa.me pro WhatsApp. So NAO carrega anexo (link
-// nao suporta isso) nem o destinatario (ainda pendente, ver STATUS.md) -
-// os dois ficam pra completar manualmente antes de mandar.
-function abrirNoGmail(idAluno) {
-  const d = ultimosPreviewsEmail[idAluno];
-  if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
+async function renderizarAreaGmailAnexo(idAluno) {
+  const area = document.getElementById('gmail-anexo-area-' + idAluno);
+  if (!area) return;
+  const status = await statusGmail();
+  if (!status.configurado) {
+    area.innerHTML = '<div class="fonte">Criação de rascunho com anexo automático ainda não foi configurada pelo administrador.</div>';
+  } else if (!status.conectado) {
+    area.innerHTML =
+      '<a class="btn-nao" style="text-decoration:none; display:inline-block;" href="/api/gmail/autorizar">Conectar meu Gmail (uma vez só, pra anexar automaticamente)</a>' +
+      '<div class="fonte" style="margin-top:4px;">Depois de conectar, o botão "Criar rascunho com anexo" aparece aqui — junta contrato + atas automaticamente, sem precisar anexar na mão.</div>';
+  } else {
+    area.innerHTML =
+      `<button class="acao" onclick="criarRascunhoComAnexo('${idAluno}')">Criar rascunho no Gmail com anexo automático</button>` +
+      `<div class="fonte" style="margin-top:4px;">Conectado como ${status.email_conectado} — cria o rascunho já com contrato + atas anexados de verdade, via API do Gmail. Confira e complete o destinatário antes de enviar.</div>`;
+  }
+}
 
+// Monta assunto/corpo do email jurídico a partir da prévia já carregada -
+// reaproveitado tanto por abrirNoGmail (link tipo wa.me, sem anexo) quanto
+// por criarRascunhoComAnexo (API de verdade, com anexo - ver mais abaixo).
+function montarConteudoEmailJuridico(d, comAnexoAutomatico) {
   const nome = (d.dados_pessoais.find(c => c.rotulo === 'Nome') || {}).valor || '(nome não encontrado)';
   const assunto = `Encaminhamento para análise jurídica — ${nome}`;
 
   const linhas = [
-    'RASCUNHO - revisar antes de enviar. Preencha o destinatário (advogado/escritório) e anexe',
-    'o contrato/ata manualmente - este link não carrega anexo nem destinatário sozinho.',
+    'RASCUNHO - revisar antes de enviar. Preencha o destinatário (advogado/escritório)' +
+      (comAnexoAutomatico ? ' antes de enviar.' : ' e anexe o contrato/ata manualmente - este link não carrega anexo nem destinatário sozinho.'),
     '',
     'Dados do aluno:',
     ...d.dados_pessoais.map(c => `  ${c.rotulo}: ${c.valor}`),
@@ -3054,12 +3185,57 @@ function abrirNoGmail(idAluno) {
   if (d.turmas.length) linhas.push(...d.turmas.map(t => `  ${t.data} — ${t.nome}`));
   else linhas.push('  Nenhuma turma no cadastro.');
   if (d.anexos.length) {
-    linhas.push('', 'Anexar manualmente:', ...d.anexos.map(a => `  - ${a.nome_arquivo}`));
+    linhas.push('', comAnexoAutomatico ? 'Anexado automaticamente:' : 'Anexar manualmente:', ...d.anexos.map(a => `  - ${a.nome_arquivo}`));
   }
+  return { assunto, corpo: linhas.join('\\n') };
+}
 
-  const corpo = linhas.join('\\n');
+// "Abrir no Gmail" (pedido do usuario, 2026-09-15: "algo como o wa.me,
+// mas pro Gmail") - o Gmail tem uma URL de composicao que abre o rascunho
+// JA PREENCHIDO (assunto + corpo) numa aba, sem enviar nada sozinho -
+// mesmo espirito do link wa.me pro WhatsApp. So NAO carrega anexo (link
+// nao suporta isso) nem o destinatario (ainda pendente, ver STATUS.md) -
+// os dois ficam pra completar manualmente antes de mandar.
+function abrirNoGmail(idAluno) {
+  const d = ultimosPreviewsEmail[idAluno];
+  if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
+  const { assunto, corpo } = montarConteudoEmailJuridico(d, false);
   const url = `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(assunto)}&body=${encodeURIComponent(corpo)}`;
   window.open(url, '_blank');
+}
+
+// Criar rascunho COM anexo de verdade (pedido do usuario, 2026-09-15) -
+// usa a API oficial do Gmail (OAuth ja autorizado pelo proprio
+// funcionario, ver gmail_client.py) - passa PELA autorizacao do Gmail,
+// nunca burla nada. Anexos (contrato + atas) sao buscados de novo no
+// servidor (mesma fonte da previa), nunca reenviados pelo navegador.
+let gmailStatusCache = null;
+
+async function statusGmail() {
+  if (gmailStatusCache) return gmailStatusCache;
+  const r = await fetch('/api/gmail/status');
+  gmailStatusCache = await r.json();
+  return gmailStatusCache;
+}
+
+async function criarRascunhoComAnexo(idAluno) {
+  const d = ultimosPreviewsEmail[idAluno];
+  if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
+  const msgDiv = document.getElementById('gmail-anexo-msg-' + idAluno);
+  msgDiv.textContent = 'Criando rascunho (buscando anexos)...';
+  const { assunto, corpo } = montarConteudoEmailJuridico(d, true);
+  const r = await fetch(`/api/aluno/${idAluno}/rascunho-gmail`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ assunto, corpo }),
+  });
+  const resp = await r.json();
+  if (resp.erro) {
+    msgDiv.innerHTML = `<span style="color:var(--danger)">${resp.erro}</span>`;
+    return;
+  }
+  msgDiv.innerHTML = `<span style="color:var(--success)">Rascunho criado com ${resp.quantidade_anexos} anexo(s)! ` +
+    `<a href="https://mail.google.com/mail/u/0/#drafts" target="_blank">Abrir rascunhos no Gmail</a></span>` +
+    (resp.avisos_anexos.length ? `<div class="fonte" style="margin-top:4px;">${resp.avisos_anexos.map(a => '⚠ ' + a).join('<br>')}</div>` : '');
 }
 
 // Registro de ocorrencia de contato (pedido do Diogenes via Caio,
@@ -4531,6 +4707,23 @@ async function carregar() {
       </div>
     </div>
     <div class="card">
+      <b>Gmail (criar rascunho COM anexo)</b>
+      <div class="nota">
+        Credencial do APP (compartilhada por todos) — cada funcionário ainda precisa conectar a própria conta
+        individualmente, na tela de Reconciliação. Passo a passo pra criar essa credencial no Google Cloud Console
+        está comentado no topo de <code>gmail_client.py</code>. URI de redirecionamento a cadastrar lá:
+        <code>https://sistema-mascara.69-169-102-111.sslip.io/api/gmail/callback</code>
+      </div>
+      <label style="margin-top:10px;">Client ID</label>
+      <input type="text" id="gmail_client_id" value="${cfg.gmail.client_id}">
+      <label>Client Secret</label>
+      <input type="password" id="gmail_client_secret" value="${cfg.gmail.client_secret}">
+      <div class="checkbox-linha" style="margin-top:8px;">
+        <input type="checkbox" id="gmail_configurado" ${cfg.gmail.configurado ? 'checked' : ''}>
+        <label for="gmail_configurado" style="margin:0;">Marcar como configurado (só depois de criar a credencial acima)</label>
+      </div>
+    </div>
+    <div class="card">
       <label>Quem tem acesso a esta tela (um por linha) — pode ser o login numérico do Fuctura OU o nome que aparece no menu ao logar (ex: "Diogenes")</label>
       <textarea id="admins" rows="4" style="width:100%; font-family:monospace;">${cfg.admins.join('\\n')}</textarea>
       <div class="nota">Comparação por nome ignora acento/maiúscula e aceita nome parcial (ex: "Diogenes" cobre "Diógenes Souza Leão").</div>
@@ -4556,6 +4749,11 @@ async function salvar() {
     certificado_path: document.getElementById('cora_certificado_path').value.trim(),
     ambiente: document.getElementById('cora_ambiente').value,
     configurado: document.getElementById('cora_configurado').checked,
+  };
+  cfg.gmail = {
+    client_id: document.getElementById('gmail_client_id').value.trim(),
+    client_secret: document.getElementById('gmail_client_secret').value.trim(),
+    configurado: document.getElementById('gmail_configurado').checked,
   };
   const r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)});
   document.getElementById('msg').textContent = r.ok ? ' Salvo.' : ' Erro ao salvar.';

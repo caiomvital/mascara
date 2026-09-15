@@ -34,6 +34,16 @@ DEFAULT_CONFIG = {
         "configurado": False,
         "client_id": "", "client_secret": "", "certificado_path": "", "ambiente": "sandbox",
     },
+    # Gmail (criar rascunho COM anexo, via OAuth de verdade - pedido do
+    # usuario 2026-09-15). "configurado" so depois de criar a
+    # credencial no Google Cloud Console - ver gmail_client.py pro
+    # passo a passo. client_id/client_secret sao do APP (compartilhados
+    # entre todos os funcionarios) - cada funcionario ainda precisa
+    # autorizar individualmente (ver gmail_tokens.json, por login).
+    "gmail": {
+        "configurado": False,
+        "client_id": "", "client_secret": "",
+    },
 }
 
 _lock = threading.RLock()  # reentrante: carregar() pode chamar salvar() ainda segurando o lock

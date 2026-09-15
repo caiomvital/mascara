@@ -4,6 +4,7 @@ NOTAS_PRIVADAS.md
 # Estado e config de runtime
 manutencao.json
 config.json
+gmail_tokens.json
 __pycache__/
 *.pyc
 *_progresso.json
