@@ -837,12 +837,12 @@ def aplicar_acao(client, analise):
             status_code = client.editar_comentario(
                 analise["id_aluno"], comentario_analise["id_acomp"],
                 assunto=novo_titulo, tipo="15", descricao=novo_texto,
-                turma_id=acao["turma_id"],
+                turma_id=acao["turma_id"], turma_nome=acao["turma_nome"],
             )
         else:
             status_code = client.gravar_comentario(
                 analise["id_aluno"], "Matrícula em turma de controle (reconciliação)", "15",
-                _TEXTO_MATRICULA_RECONCILIACAO, turma_id=acao["turma_id"],
+                _TEXTO_MATRICULA_RECONCILIACAO, turma_id=acao["turma_id"], turma_nome=acao["turma_nome"],
             )
         return status_code == 200, f"Matriculado em {acao['turma_nome']}"
 

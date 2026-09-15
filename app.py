@@ -2004,6 +2004,7 @@ class Handler(BaseHTTPRequestHandler):
         assunto = _texto(body.get("assunto"))
         descricao = _texto(body.get("descricao"))
         turma_id = _texto(body.get("turma_id")) or None
+        turma_nome = _texto(body.get("turma_nome")) or None
         if tipo not in TIPOS_COMENTARIO_MANUAL:
             self._send_json({"erro": "Tipo de comentário inválido."}, 400)
             return
@@ -2015,7 +2016,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             client = sessao["client"]
-            status_code = client.gravar_comentario(id_aluno, assunto, tipo, descricao, turma_id=turma_id)
+            status_code = client.gravar_comentario(id_aluno, assunto, tipo, descricao, turma_id=turma_id, turma_nome=turma_nome)
             if status_code != 200:
                 self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
                 return
@@ -2038,6 +2039,7 @@ class Handler(BaseHTTPRequestHandler):
         assunto = _texto(body.get("assunto"))
         descricao = _texto(body.get("descricao"))
         turma_id = _texto(body.get("turma_id")) or None
+        turma_nome = _texto(body.get("turma_nome")) or None
         if tipo not in TIPOS_COMENTARIO_MANUAL:
             self._send_json({"erro": "Tipo de comentário inválido."}, 400)
             return
@@ -2049,7 +2051,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             client = sessao["client"]
-            status_code = client.editar_comentario(id_aluno, id_acomp, assunto, tipo, descricao, turma_id=turma_id)
+            status_code = client.editar_comentario(id_aluno, id_acomp, assunto, tipo, descricao, turma_id=turma_id, turma_nome=turma_nome)
             if status_code != 200:
                 self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
                 return
@@ -2188,7 +2190,7 @@ class Handler(BaseHTTPRequestHandler):
             client = sessao["client"]
             status_code = client.gravar_comentario(
                 id_aluno, turma_nome.upper(), "15", observacao, turma_id=turma_id,
-                valor_contratado=valor_fmt, forma_pagamento=forma_pagamento,
+                valor_contratado=valor_fmt, forma_pagamento=forma_pagamento, turma_nome=turma_nome,
             )
             if status_code != 200:
                 self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
@@ -2380,7 +2382,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             status_matricula = client.gravar_comentario(
                 id_aluno, turma_nome.upper(), "15", resumo,
-                turma_id=turma_id, valor_contratado="0,00", forma_pagamento="---",
+                turma_id=turma_id, valor_contratado="0,00", forma_pagamento="---", turma_nome=turma_nome,
             )
             if status_matricula != 200:
                 self._send_json({
@@ -2411,7 +2413,7 @@ class Handler(BaseHTTPRequestHandler):
             status = client.gravar_comentario(
                 id_aluno, turma_nome.upper(), "15",
                 f"Movido da triagem \"{client.NOME_TURMA_TRIAGEM_INTERESSADOS}\" após contato.",
-                turma_id=turma_id, valor_contratado="0,00", forma_pagamento="---",
+                turma_id=turma_id, valor_contratado="0,00", forma_pagamento="---", turma_nome=turma_nome,
             )
             if status != 200:
                 self._send_json({"erro": f"O Fuctura respondeu com status {status}."}, 500)
@@ -2949,12 +2951,15 @@ async function verBoletosCora(idAluno) {
   `;
 }
 
+let ultimosPreviewsEmail = {};  // idAluno -> ultima resposta de preview-email, pra "Abrir no Gmail" reaproveitar sem buscar de novo
+
 async function verPreviaEmail(idAluno) {
   const div = document.getElementById('email-' + idAluno);
   div.innerHTML = '<div class="card">Montando prévia...</div>';
   const r = await fetch(`/api/aluno/${idAluno}/preview-email`);
   const d = await r.json();
   if (d.erro) { div.innerHTML = `<div class="card">Erro: ${d.erro}</div>`; return; }
+  ultimosPreviewsEmail[idAluno] = d;
 
   const cora = !d.boletos_cora
     ? '<div class="fonte">⚠ CORA ainda não está configurado.</div>'
@@ -2977,8 +2982,10 @@ async function verPreviaEmail(idAluno) {
         ⚠ Este e-mail é um <b>rascunho pro advogado</b> (controle de informações do caso) — nunca é enviado
         ao aluno/responsável. Para: <i>ainda pendente</i> (endereço do advogado/escritório não configurado).
       </div>
+      <button class="btn-nao" onclick="abrirNoGmail('${idAluno}')">Abrir rascunho no Gmail</button>
+      <div class="fonte" style="margin-top:4px;">Abre o Gmail com assunto e corpo já preenchidos — falta só completar o destinatário (endereço do advogado, ainda pendente) e anexar os arquivos manualmente (o link não carrega anexo). Nada é enviado sozinho.</div>
 
-      <b>Dados do aluno</b>
+      <b style="display:block; margin-top:14px;">Dados do aluno</b>
       <table style="margin-top:6px;">
         ${d.dados_pessoais.map(c => `<tr><th>${c.rotulo}</th><td>${c.valor}</td></tr>`).join('')}
       </table>
@@ -3008,6 +3015,51 @@ async function verPreviaEmail(idAluno) {
       ${d.avisos_anexos.length ? `<div class="fonte" style="margin-top:6px; color:var(--warning);">${d.avisos_anexos.map(a => '⚠ ' + a).join('<br>')}</div>` : ''}
     </div>
   `;
+}
+
+// "Abrir no Gmail" (pedido do usuario, 2026-09-15: "algo como o wa.me,
+// mas pro Gmail") - o Gmail tem uma URL de composicao que abre o rascunho
+// JA PREENCHIDO (assunto + corpo) numa aba, sem enviar nada sozinho -
+// mesmo espirito do link wa.me pro WhatsApp. So NAO carrega anexo (link
+// nao suporta isso) nem o destinatario (ainda pendente, ver STATUS.md) -
+// os dois ficam pra completar manualmente antes de mandar.
+function abrirNoGmail(idAluno) {
+  const d = ultimosPreviewsEmail[idAluno];
+  if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
+
+  const nome = (d.dados_pessoais.find(c => c.rotulo === 'Nome') || {}).valor || '(nome não encontrado)';
+  const assunto = `Encaminhamento para análise jurídica — ${nome}`;
+
+  const linhas = [
+    'RASCUNHO - revisar antes de enviar. Preencha o destinatário (advogado/escritório) e anexe',
+    'o contrato/ata manualmente - este link não carrega anexo nem destinatário sozinho.',
+    '',
+    'Dados do aluno:',
+    ...d.dados_pessoais.map(c => `  ${c.rotulo}: ${c.valor}`),
+    '',
+    `Responsável pelo contrato (${d.responsavel_contrato.papel === 'responsavel' ? 'responsável' : 'o próprio aluno, sem responsável cadastrado'}):`,
+    `  Nome: ${d.responsavel_contrato.nome}`,
+    `  CPF: ${d.responsavel_contrato.cpf}`,
+    `  Telefone: ${d.responsavel_contrato.telefone}`,
+    `  Email: ${d.responsavel_contrato.email}`,
+    '',
+    'Resumo — pagamentos e possíveis motivos de desistência:',
+    d.resumo_pagamentos_desistencia,
+    '',
+  ];
+  if (d.boletos_cora && !d.boletos_cora.erro) {
+    linhas.push('Valores em aberto (CORA):', `  ${d.boletos_cora.resumo_texto || ''}`, '');
+  }
+  linhas.push('Turmas em que o aluno está registrado:');
+  if (d.turmas.length) linhas.push(...d.turmas.map(t => `  ${t.data} — ${t.nome}`));
+  else linhas.push('  Nenhuma turma no cadastro.');
+  if (d.anexos.length) {
+    linhas.push('', 'Anexar manualmente:', ...d.anexos.map(a => `  - ${a.nome_arquivo}`));
+  }
+
+  const corpo = linhas.join('\\n');
+  const url = `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(assunto)}&body=${encodeURIComponent(corpo)}`;
+  window.open(url, '_blank');
 }
 
 // Registro de ocorrencia de contato (pedido do Diogenes via Caio,
@@ -3346,6 +3398,7 @@ async function salvarComentario(idAluno) {
     assunto: document.getElementById('novoComentarioAssunto').value.trim(),
     descricao: document.getElementById('novoComentarioDescricao').value.trim(),
     turma_id: document.getElementById('novoComentarioTurmaId').value,
+    turma_nome: document.getElementById('novoComentarioBuscaTurma').value.trim(),
   };
   const msg = document.getElementById('novoComentarioMsg');
   msg.textContent = 'Salvando...';
@@ -3388,6 +3441,7 @@ async function salvarEdicaoComentario(idAluno) {
     assunto: document.getElementById('editarComentarioAssunto').value.trim(),
     descricao: document.getElementById('editarComentarioDescricao').value.trim(),
     turma_id: document.getElementById('editarComentarioTurmaId').value,
+    turma_nome: document.getElementById('editarComentarioBuscaTurma').value.trim(),
   };
   const msg = document.getElementById('editarComentarioMsg');
   msg.textContent = 'Salvando...';

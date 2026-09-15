@@ -108,12 +108,29 @@ def _lock_para_aluno(id_aluno):
 
 
 class FucturaClient:
+    # Achado real 2026-09-15: rodando um lote de ~90 gravacoes na mesma
+    # sessao, so as primeiras ~25 (75 requisicoes, 3 por aluno: perfil +
+    # comentarios + gravar) realmente persistiram - as demais devolveram
+    # HTTP 200 normalmente, mas NUNCA apareceram no cadastro do aluno
+    # (confirmado via dois caminhos de leitura independentes, perfil_aluno
+    # e roster_turma). Reescrever a MESMA gravacao com uma sessao nova
+    # (login do zero) funcionou na hora, sempre - leitura nunca teve esse
+    # problema, so escrita. Ou seja: a sessao do Fuctura degrada por
+    # VOLUME de requisicoes acumuladas (nao so por tempo, que ja era
+    # tratado em _get/_post via _logged_in_at), silenciosamente, sem
+    # avisar (HTTP continua 200). Corrigido forcando relogin periodico
+    # por CONTAGEM de requisicao, nao so por tempo - valor escolhido com
+    # boa margem abaixo do ponto onde o problema comecou a aparecer nos
+    # testes reais.
+    LIMITE_REQUESTS_POR_SESSAO = 30
+
     def __init__(self, login, senha):
         self.login = login
         self.senha = senha
         self.session = requests.Session()
         self.session.headers.update(_HEADERS_PADRAO)
         self._logged_in_at = 0
+        self._requests_desde_login = 0
 
     def entrar(self):
         r = self.session.post(
@@ -138,6 +155,7 @@ class FucturaClient:
         if r.status_code != 302:
             raise FucturaAuthError("Login ou senha incorretos.")
         self._logged_in_at = time.time()
+        self._requests_desde_login = 0
         self.nome_usuario = self._buscar_nome_usuario()
 
     def _buscar_nome_usuario(self):
@@ -152,9 +170,23 @@ class FucturaClient:
         except requests.exceptions.RequestException:
             return ""
 
+    def _relogar_se_necessario(self):
+        if time.time() - self._logged_in_at <= 600 and self._requests_desde_login < self.LIMITE_REQUESTS_POR_SESSAO:
+            return
+        # sessao NOVA (nao so re-logar na mesma) - o teste real que
+        # confirmou o achado de 2026-09-15 usou sempre um FucturaClient
+        # novo do zero; nao temos certeza se so re-postar login na MESMA
+        # requests.Session (mesmo cookie jar) resolve a degradacao, entao
+        # nao arrisca - troca a sessao tambem, mesmo padrao ja usado no
+        # retry por excecao de rede em _get().
+        self.session.close()
+        self.session = requests.Session()
+        self.session.headers.update(_HEADERS_PADRAO)
+        self.entrar()
+
     def _get(self, path, params=None):
-        if time.time() - self._logged_in_at > 600:
-            self.entrar()
+        self._relogar_se_necessario()
+        self._requests_desde_login += 1
         for attempt in range(3):
             try:
                 return self.session.get(f"{BASE}/{path}", auth=AUTH, params=params, timeout=25)
@@ -166,8 +198,8 @@ class FucturaClient:
         raise RuntimeError(f"Falha ao buscar {path} apos 3 tentativas")
 
     def _post(self, path, data):
-        if time.time() - self._logged_in_at > 600:
-            self.entrar()
+        self._relogar_se_necessario()
+        self._requests_desde_login += 1
         return self.session.post(f"{BASE}/{path}", auth=AUTH, data=data, timeout=25)
 
     # ---------- turmas ----------
@@ -544,7 +576,7 @@ class FucturaClient:
         return m_id.group(1), nome
 
     def gravar_comentario(self, id_aluno, assunto, tipo, descricao, turma_id=None,
-                           valor_contratado="0,00", forma_pagamento="---"):
+                           valor_contratado="0,00", forma_pagamento="---", turma_nome=None):
         """tipo: '3'=-Comentario, '2'=Urgente, '15'=-Matricula (matricula tambem na turma se turma_id for passado).
 
         valor_contratado/forma_pagamento: SO importam de verdade quando
@@ -557,32 +589,49 @@ class FucturaClient:
         pra uma matricula de curso de verdade (ver FORMA_PAGAMENTO pros
         valores validos de forma_pagamento).
 
-        ACHADO REAL 2026-09-15: rodando colocar_interessados_sem_turma.py
-        em lote (92 alunos, mesma sessao, escritas rapidas em sequencia),
-        so os 25 primeiros realmente gravaram - os outros 67 devolveram
-        HTTP 200 mas NUNCA apareceram no cadastro do aluno (confirmado via
-        perfil_aluno E via roster_turma, dois caminhos de leitura
-        independentes). Reescrever UM isolado (sem lote) funcionou na
-        hora - aponta pra alguma degradacao de sessao/limite de volume do
-        lado do Fuctura apos varias escritas seguidas (ver memoria
-        fuctura_waf_limite_volume), nao um bug simples de precondicao como
-        o do editar_comentario. Mesmo assim, adiciona a MESMA garantia de
-        precondicao por seguranca (barato, nunca fez mal) - mas o
-        remedio de verdade pra esse achado especifico e code do lado de
-        quem CHAMA isto em lote: sempre conferir a gravacao (ler de volta
-        com um atraso) em vez de confiar cegamente no HTTP 200, e espacar
-        mais as escritas."""
+        CAUSA RAIZ REAL, achada em 2026-09-15 (superou o diagnostico
+        anterior de "degradacao de sessao"): rodando
+        colocar_interessados_sem_turma.py em lote, so 25-27 de 92
+        realmente gravaram a matricula COM VINCULO DE TURMA - o resto
+        devolvia HTTP 200 mas nunca aparecia em perfil_aluno nem
+        roster_turma. Isolando 1 aluno com sessao 100% fresca (novo login,
+        1 unica escrita) o problema REPRODUZIU DE NOVO - descartando a
+        teoria de volume/degradacao de sessao como causa principal.
+        Comparando byte a byte com o POST que o formulario de verdade
+        manda, achei a diferenca: o campo 'buscaTurmaAutoComplete' (o
+        texto que o widget de autocomplete da turma preenche na tela,
+        nunca preenchido aqui - sempre ia vazio) precisa vir com o NOME da
+        turma, nao vazio. Confirmado ao vivo, A/B controlado 2x (aluno
+        JANE CLEIDE id 48760: sem o campo falhou, com ele (=assunto, que
+        por acaso era o nome da turma) funcionou; aluno IGOR id 47979,
+        DECISIVO: assunto proposital MENTIROSO/generico + turma_nome
+        correto em buscaTurmaAutoComplete -> vinculou do mesmo jeito,
+        provando que e o buscaTurmaAutoComplete que importa pro Fuctura
+        RESOLVER a turma, nao o assunto). Por isso 'turma_nome' agora e um
+        parametro PROPRIO, separado de 'assunto' - NAO dava pra so
+        reaproveitar assunto (achado ao investigar reconciliacao_devedor.
+        aplicar_acao: la o assunto e um titulo descritivo tipo "Matrícula
+        em turma de controle (reconciliação)", NUNCA o nome real da turma
+        de controle - esse call site estava 100% quebrado, matriculacoes
+        de Devedor/Pendencia e Aguardando Advogado via "Aplicar Ação"
+        nunca vincularam turma nenhuma desde que a funcionalidade existe).
+        Fallback pra assunto quando turma_nome nao e passado, por
+        seguranca com call sites antigos onde os dois coincidem - mas todo
+        call site NOVO deve passar turma_nome explicito. A garantia de
+        precondicao (GET antes) e o relogin por volume
+        (LIMITE_REQUESTS_POR_SESSAO) continuam, sem atrapalhar."""
         self._get("lista_alunos.php", params={"idAluno": id_aluno})
+        busca_turma = (turma_nome or assunto) if turma_id else ""
         data = {
             "assunto": assunto, "tipo": tipo, "valorContratado": valor_contratado,
             "formaPagamento": forma_pagamento, "descricao": descricao,
-            "buscaTurmaAutoComplete": "", "turma": turma_id or "",
+            "buscaTurmaAutoComplete": busca_turma, "turma": turma_id or "",
             "idAluno": id_aluno, "idAcomp": "", "cadAcompanhamento": "1",
         }
         r = self._post("lista_alunos.php", data)
         return r.status_code
 
-    def editar_comentario(self, id_aluno, id_acomp, assunto, tipo, descricao, turma_id=None):
+    def editar_comentario(self, id_aluno, id_acomp, assunto, tipo, descricao, turma_id=None, turma_nome=None):
         """O Fuctura NAO tem funcao de excluir comentario/acompanhamento -
         confirmado investigando a interface (server_datatables_aluno.php so
         linka pra edicao via idAcomp, sem nenhum botao/endpoint de exclusao
@@ -605,12 +654,21 @@ class FucturaClient:
         mas a funcao em si nao devia depender de um GET incidental feito
         em outro lugar do codigo. Por isso agora ela GARANTE a propria
         pre-condicao aqui dentro, sempre - fica segura de chamar de
-        qualquer lugar, mesmo isolada."""
+        qualquer lugar, mesmo isolada.
+
+        turma_nome: mesmo achado real 2026-09-15 de gravar_comentario -
+        'buscaTurmaAutoComplete' (aqui tambem sempre ia vazio) precisa do
+        NOME da turma pra vincular de verdade quando turma_id e passado;
+        sem isso a edicao tambem vira no-op silencioso pro vinculo de
+        turma (o resto da edicao - assunto/descricao - grava normalmente,
+        so a turma que nao entra). Fallback pra assunto por compatibilidade
+        com call sites antigos onde os dois coincidem."""
         self._get("lista_alunos.php", params={"idAluno": id_aluno})
+        busca_turma = (turma_nome or assunto) if turma_id else ""
         data = {
             "assunto": assunto, "tipo": tipo, "valorContratado": "0,00",
             "formaPagamento": "---", "descricao": descricao,
-            "buscaTurmaAutoComplete": "", "turma": turma_id or "",
+            "buscaTurmaAutoComplete": busca_turma, "turma": turma_id or "",
             "idAluno": id_aluno, "idAcomp": id_acomp, "cadAcompanhamento": "1",
         }
         r = self._post("lista_alunos.php", data)

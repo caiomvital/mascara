@@ -46,18 +46,18 @@ class _ClienteFake:
     def comentarios_aluno(self, id_aluno):
         return self._comentarios
 
-    def editar_comentario(self, id_aluno, id_acomp, assunto, tipo, descricao, turma_id=None):
+    def editar_comentario(self, id_aluno, id_acomp, assunto, tipo, descricao, turma_id=None, turma_nome=None):
         self.chamadas_editar.append({
             "id_aluno": id_aluno, "id_acomp": id_acomp, "assunto": assunto,
-            "tipo": tipo, "descricao": descricao, "turma_id": turma_id,
+            "tipo": tipo, "descricao": descricao, "turma_id": turma_id, "turma_nome": turma_nome,
         })
         return 200
 
     def gravar_comentario(self, id_aluno, assunto, tipo, descricao, turma_id=None,
-                           valor_contratado="0,00", forma_pagamento="---"):
+                           valor_contratado="0,00", forma_pagamento="---", turma_nome=None):
         self.chamadas_gravar.append({
             "id_aluno": id_aluno, "assunto": assunto, "tipo": tipo,
-            "descricao": descricao, "turma_id": turma_id,
+            "descricao": descricao, "turma_id": turma_id, "turma_nome": turma_nome,
         })
         return 200
 
@@ -128,6 +128,13 @@ def teste_aplicar_acao_mescla_na_analise_existente():
         f"chamada: {chamada}",
     )
     relatar(
+        "ACHADO REAL 2026-09-15: aplicar_acao passa turma_nome pra editar_comentario (sem isso o "
+        "Fuctura aceitava HTTP 200 mas NUNCA vinculava a turma de controle de verdade - assunto aqui "
+        "é um título descritivo, nunca o nome real da turma, então não dava pra reaproveitar)",
+        chamada["turma_nome"] == "Devedor/Pendência",
+        f"turma_nome: {chamada['turma_nome']!r}",
+    )
+    relatar(
         "aplicar_acao mesclado: título ganha o sufixo ' -- IA --' ao final",
         chamada["assunto"] == rec.ASSUNTO_ANALISE_AUTOMATICA + " -- IA --",
         f"assunto: {chamada['assunto']!r}",
@@ -153,6 +160,12 @@ def teste_aplicar_acao_sem_analise_previa_cai_no_comportamento_antigo():
         "aplicar_acao fallback: continua indo pra turma certa com tipo '15'",
         client.chamadas_gravar[0]["turma_id"] == "1138" and client.chamadas_gravar[0]["tipo"] == "15",
         f"gravar: {client.chamadas_gravar}",
+    )
+    relatar(
+        "ACHADO REAL 2026-09-15: aplicar_acao (fallback sem análise prévia) também passa turma_nome "
+        "pra gravar_comentario (mesmo achado do buscaTurmaAutoComplete)",
+        client.chamadas_gravar[0]["turma_nome"] == "Devedor/Pendência",
+        f"turma_nome: {client.chamadas_gravar[0]['turma_nome']!r}",
     )
 
 

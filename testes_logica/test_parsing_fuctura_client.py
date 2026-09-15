@@ -11,9 +11,11 @@ Como rodar:
 """
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import fuctura_client as fuctura_client_module  # noqa: E402
 from fuctura_client import FucturaClient, FucturaAuthError, parse_money  # noqa: E402
 
 _falhas = []
@@ -284,6 +286,130 @@ def teste_entrar_distingue_bloqueio_de_infraestrutura_de_senha_errada():
     relatar("entrar() com HTTP 200 (login rejeitado de verdade) ainda usa a mensagem de senha errada", ok, detalhe)
 
 
+class _SessaoContavel:
+    """Sessao fake que conta chamadas de login (post em ctrl_acesso.php) -
+    pra testar o relogin por CONTAGEM de requisicao (achado real
+    2026-09-15: sessao do Fuctura degrada silenciosamente apos varias
+    requisicoes acumuladas - escrita para de persistir, mesmo devolvendo
+    HTTP 200) sem rede nenhuma."""
+
+    def __init__(self):
+        self.chamadas_post_login = 0
+        self.headers = {}
+
+    def post(self, url, **kwargs):
+        if "ctrl_acesso.php" in url:
+            self.chamadas_post_login += 1
+        r = _RespostaFake("")
+        r.status_code = 302
+        return r
+
+    def get(self, url, **kwargs):
+        return _RespostaFake("")
+
+    def close(self):
+        pass
+
+
+def teste_relogin_por_contagem_de_requisicao():
+    sessao_fake = _SessaoContavel()
+    sessao_original_cls = fuctura_client_module.requests.Session
+    fuctura_client_module.requests.Session = lambda: sessao_fake
+    try:
+        cliente = FucturaClient.__new__(FucturaClient)
+        cliente.session = sessao_fake
+        cliente.login, cliente.senha = "0", "x"
+        cliente._logged_in_at = time.time()
+        cliente._requests_desde_login = 0
+
+        limite = FucturaClient.LIMITE_REQUESTS_POR_SESSAO
+        for _ in range(limite):
+            cliente._get("qualquer.php")
+        relatar(
+            f"depois de exatamente {limite} requisições, ainda não relogou (o limite só dispara na requisição seguinte)",
+            sessao_fake.chamadas_post_login == 0 and cliente._requests_desde_login == limite,
+            f"chamadas_post_login={sessao_fake.chamadas_post_login}, _requests_desde_login={cliente._requests_desde_login}",
+        )
+
+        cliente._get("qualquer.php")  # a requisicao numero `limite + 1` deve disparar o relogin
+        relatar(
+            f"na requisição {limite + 1}, relogou automaticamente (contagem atingiu o limite)",
+            sessao_fake.chamadas_post_login == 1,
+            f"chamadas_post_login={sessao_fake.chamadas_post_login}",
+        )
+        relatar(
+            "contador de requisições zera depois do relogin automático",
+            cliente._requests_desde_login == 1,  # a propria requisicao que disparou o relogin ja conta como 1 na sessao nova
+            f"_requests_desde_login={cliente._requests_desde_login}",
+        )
+    finally:
+        fuctura_client_module.requests.Session = sessao_original_cls
+
+
+def _cliente_capturando_post():
+    """FucturaClient cujo _post so guarda o 'data' recebido (em
+    chamadas['data']) em vez de fazer rede - pra inspecionar exatamente o
+    que gravar_comentario/editar_comentario mandam pro Fuctura."""
+    cliente = FucturaClient.__new__(FucturaClient)
+    chamadas = {"data": None}
+    cliente._get = lambda *a, **k: _RespostaFake("")
+
+    def _post_fake(path, data):
+        chamadas["data"] = data
+        return _RespostaFake("")
+
+    cliente._post = _post_fake
+    return cliente, chamadas
+
+
+def teste_gravar_comentario_manda_nome_da_turma_no_busca_auto_complete():
+    """ACHADO REAL 2026-09-15: o Fuctura so vincula a turma de verdade
+    (matricula tipo '15' + turma_id) se 'buscaTurmaAutoComplete' vier
+    preenchido com o NOME da turma - confirmado ao vivo que 'assunto'
+    sozinho nao basta (reconciliacao_devedor.aplicar_acao usa um assunto
+    descritivo, nunca o nome da turma, e por isso NUNCA vinculava a
+    turma de controle antes desta correcao)."""
+    cliente, chamadas = _cliente_capturando_post()
+    cliente.gravar_comentario(
+        "123", "Matrícula em turma de controle (reconciliação)", "15", "texto",
+        turma_id="1375", turma_nome="Devedor/Pendência",
+    )
+    relatar(
+        "gravar_comentario com turma_nome explicito manda ele em buscaTurmaAutoComplete (nao o assunto)",
+        chamadas["data"]["buscaTurmaAutoComplete"] == "Devedor/Pendência",
+        f"buscaTurmaAutoComplete={chamadas['data'].get('buscaTurmaAutoComplete')!r}",
+    )
+
+    cliente2, chamadas2 = _cliente_capturando_post()
+    cliente2.gravar_comentario("123", "-IA- Interessados", "15", "texto", turma_id="1375")
+    relatar(
+        "gravar_comentario sem turma_nome cai pro assunto (compatibilidade com call sites antigos)",
+        chamadas2["data"]["buscaTurmaAutoComplete"] == "-IA- Interessados",
+        f"buscaTurmaAutoComplete={chamadas2['data'].get('buscaTurmaAutoComplete')!r}",
+    )
+
+    cliente3, chamadas3 = _cliente_capturando_post()
+    cliente3.gravar_comentario("123", "-Comentário qualquer", "3", "texto")
+    relatar(
+        "gravar_comentario sem turma_id manda buscaTurmaAutoComplete vazio (nao inventa turma)",
+        chamadas3["data"]["buscaTurmaAutoComplete"] == "",
+        f"buscaTurmaAutoComplete={chamadas3['data'].get('buscaTurmaAutoComplete')!r}",
+    )
+
+
+def teste_editar_comentario_manda_nome_da_turma_no_busca_auto_complete():
+    cliente, chamadas = _cliente_capturando_post()
+    cliente.editar_comentario(
+        "123", "999", "titulo qualquer -- IA --", "15", "texto",
+        turma_id="1375", turma_nome="Aguardando Advogado",
+    )
+    relatar(
+        "editar_comentario com turma_nome explicito manda ele em buscaTurmaAutoComplete (nao o assunto)",
+        chamadas["data"]["buscaTurmaAutoComplete"] == "Aguardando Advogado",
+        f"buscaTurmaAutoComplete={chamadas['data'].get('buscaTurmaAutoComplete')!r}",
+    )
+
+
 def main():
     print("Rodando testes de parsing do fuctura_client.py (sem rede nenhuma)...\n")
     teste_busca_aluno_com_sufixo_advogado()
@@ -295,6 +421,9 @@ def main():
     teste_buscar_comentarios_por_tipo_pagina_ate_o_total()
     teste_resolver_id_aluno_por_acomp()
     teste_entrar_distingue_bloqueio_de_infraestrutura_de_senha_errada()
+    teste_relogin_por_contagem_de_requisicao()
+    teste_gravar_comentario_manda_nome_da_turma_no_busca_auto_complete()
+    teste_editar_comentario_manda_nome_da_turma_no_busca_auto_complete()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")
