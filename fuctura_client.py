@@ -555,7 +555,24 @@ class FucturaClient:
         administrativas/de controle (ex: Devedor/Pendencia, Aguardando
         Advogado - nao sao curso pago de verdade); passar o valor real
         pra uma matricula de curso de verdade (ver FORMA_PAGAMENTO pros
-        valores validos de forma_pagamento)."""
+        valores validos de forma_pagamento).
+
+        ACHADO REAL 2026-09-15: rodando colocar_interessados_sem_turma.py
+        em lote (92 alunos, mesma sessao, escritas rapidas em sequencia),
+        so os 25 primeiros realmente gravaram - os outros 67 devolveram
+        HTTP 200 mas NUNCA apareceram no cadastro do aluno (confirmado via
+        perfil_aluno E via roster_turma, dois caminhos de leitura
+        independentes). Reescrever UM isolado (sem lote) funcionou na
+        hora - aponta pra alguma degradacao de sessao/limite de volume do
+        lado do Fuctura apos varias escritas seguidas (ver memoria
+        fuctura_waf_limite_volume), nao um bug simples de precondicao como
+        o do editar_comentario. Mesmo assim, adiciona a MESMA garantia de
+        precondicao por seguranca (barato, nunca fez mal) - mas o
+        remedio de verdade pra esse achado especifico e code do lado de
+        quem CHAMA isto em lote: sempre conferir a gravacao (ler de volta
+        com um atraso) em vez de confiar cegamente no HTTP 200, e espacar
+        mais as escritas."""
+        self._get("lista_alunos.php", params={"idAluno": id_aluno})
         data = {
             "assunto": assunto, "tipo": tipo, "valorContratado": valor_contratado,
             "formaPagamento": forma_pagamento, "descricao": descricao,
