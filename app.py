@@ -722,6 +722,11 @@ __AVISOS__
   <div class="proc-title">Matricular Aluno</div>
   <div class="proc-desc">Matricula um aluno numa turma, com valor contratado e forma de pagamento reais.</div>
 </a>
+<a class="proc-card" href="/pagamento">
+  <div class="proc-icon">💳</div>
+  <div class="proc-title">Registrar Pagamento</div>
+  <div class="proc-desc">Forma, parcela, valor e data — no padrão combinado com o Diógenes. Soma de verdade no financeiro do aluno.</div>
+</a>
 <a class="proc-card" href="/interessados">
   <div class="proc-icon">🙋</div>
   <div class="proc-title">Cadastrar Interessados</div>
@@ -1157,6 +1162,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(MATRICULAR_HTML)
             return
 
+        if parsed.path == "/pagamento":
+            self._send_html(PAGAMENTO_HTML)
+            return
+
         if parsed.path == "/interessados":
             self._send_html(INTERESSADO_HTML)
             return
@@ -1522,6 +1531,13 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             self._matricular_aluno(sessao, id_aluno, body)
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/pagamento"):
+            id_aluno = parsed.path.split("/")[3]
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            self._registrar_pagamento(sessao, id_aluno, body)
             return
 
         self.send_response(404)
@@ -2160,6 +2176,60 @@ class Handler(BaseHTTPRequestHandler):
             client = sessao["client"]
             status_code = client.gravar_comentario(
                 id_aluno, turma_nome.upper(), "15", observacao, turma_id=turma_id,
+                valor_contratado=valor_fmt, forma_pagamento=forma_pagamento,
+            )
+            if status_code != 200:
+                self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
+                return
+            self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _registrar_pagamento(self, sessao, id_aluno, body):
+        """Grava um comentario '-Pagamento Realizado' (tipo 11) seguindo a
+        convencao pedida pelo Diogenes via Caio (2026-09-14): forma de
+        pagamento + parcela + valor + data, sempre no mesmo formato -
+        antes disso o sistema-mascara nunca gravava esse tipo (so lia,
+        via checagem_financeira). Confirmado AO VIVO (2026-09-15, aluno de
+        teste) que 'valorContratado' aqui soma de verdade no 'Recebido'
+        do aluno (perfil_aluno), igual matricula soma no 'Contratado' -
+        mesma cautela de _matricular_aluno: formulario proprio, nunca o
+        generico de comentario (que de proposito nao aceita tipo 11)."""
+        forma_pagamento = _texto(body.get("forma_pagamento"))
+        parcela = _texto(body.get("parcela"))
+        data_pagamento = _texto(body.get("data_pagamento"))
+        observacao = _texto(body.get("observacao"))
+        valor_str = _texto(body.get("valor")).replace(",", ".")
+
+        if forma_pagamento not in FORMA_PAGAMENTO:
+            self._send_json({"erro": "Forma de pagamento inválida."}, 400)
+            return
+        if not parcela:
+            self._send_json({"erro": "Informe a parcela / mês de referência."}, 400)
+            return
+        if not data_pagamento:
+            self._send_json({"erro": "Informe a data do pagamento."}, 400)
+            return
+        try:
+            valor = float(valor_str)
+            if valor <= 0:
+                raise ValueError
+        except ValueError:
+            self._send_json({"erro": "Valor inválido."}, 400)
+            return
+
+        valor_fmt = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        texto = (
+            f"Forma: {FORMA_PAGAMENTO[forma_pagamento]}. Parcela: {parcela}. "
+            f"Valor: R$ {valor_fmt}. Data: {data_pagamento}."
+        )
+        if observacao:
+            texto += f" Observação: {observacao}"
+
+        try:
+            client = sessao["client"]
+            status_code = client.gravar_comentario(
+                id_aluno, "Pagamento Realizado", "11", texto,
                 valor_contratado=valor_fmt, forma_pagamento=forma_pagamento,
             )
             if status_code != 200:
@@ -4056,6 +4126,97 @@ async function matricular() {
   const d = await r.json();
   if (d.erro) { msg.innerHTML = `<span style="color:var(--danger)">${d.erro}</span>`; return; }
   msg.innerHTML = `<span style="color:var(--success)">Matriculado!</span>`;
+}
+</script></body></html>"""
+
+
+PAGAMENTO_HTML = "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">\n<title>Registrar Pagamento</title>\n<style>" + BASE_CSS + """
+</style></head><body>
+<div class="page">
+<a class="voltar" href="/">← voltar</a>
+<h1>Registrar Pagamento</h1>
+<p class="subtitulo">Grava um "-Pagamento Realizado" seguindo o padrão combinado com o Diógenes (2026-09-14): forma, parcela, valor e data — isso soma de verdade no "Recebido" do aluno, confirmado ao vivo.</p>
+
+<div class="card">
+  <label>Aluno</label>
+  <div class="autocomplete-box">
+    <input type="text" id="buscaAluno" placeholder="Digite o nome do aluno..." autocomplete="off">
+    <div id="resultadosAluno" class="autocomplete-list"></div>
+  </div>
+  <input type="hidden" id="alunoId">
+  <div id="alunoEscolhido" style="margin-top:8px; font-weight:600;"></div>
+
+  <label style="margin-top:16px;">Forma de Pagamento</label>
+  <select id="formaPagamento">
+    <option value="">Selecione</option>
+    <option value="cartao">Cartão de Crédito</option>
+    <option value="debito">Débito Bancário</option>
+    <option value="especie">Dinheiro</option>
+    <option value="boleto">Boleto Bancário</option>
+    <option value="cheque">Cheque</option>
+  </select>
+
+  <label style="margin-top:16px;">Parcela / mês de referência</label>
+  <input type="text" id="parcela" placeholder="Ex: 3/12, ou Setembro/2026" autocomplete="off">
+
+  <label style="margin-top:16px;">Valor pago (R$)</label>
+  <input type="number" id="valor" step="0.01" min="0.01" placeholder="0,00">
+
+  <label style="margin-top:16px;">Data do pagamento</label>
+  <input type="text" id="dataPagamento" placeholder="DD/MM/AAAA" autocomplete="off">
+
+  <label style="margin-top:16px;">Observação (opcional)</label>
+  <textarea id="observacao" rows="3" style="width:100%;"></textarea>
+
+  <div style="margin-top:16px;">
+    <button class="acao" onclick="registrar()">Registrar Pagamento</button>
+  </div>
+  <div id="msg" style="margin-top:10px;"></div>
+</div>
+</div>
+
+<script>""" + BASE_JS + """
+let alunoDebounce = null;
+document.getElementById('buscaAluno').addEventListener('input', (e) => {
+  const q = e.target.value;
+  clearTimeout(alunoDebounce);
+  document.getElementById('alunoId').value = '';
+  if (q.length < 3) { document.getElementById('resultadosAluno').innerHTML = ''; return; }
+  alunoDebounce = setTimeout(async () => {
+    const r = await fetch('/api/aluno/buscar?q=' + encodeURIComponent(q));
+    const alunos = await r.json();
+    document.getElementById('resultadosAluno').innerHTML = (alunos.erro ? [] : alunos).map(a =>
+      `<div class="item" onclick='escolherAluno("${a.id_aluno}", ${JSON.stringify(a.nome)})'>${a.nome} ${a.matricula ? '— matrícula ' + a.matricula : ''}</div>`
+    ).join('');
+  }, 300);
+});
+
+function escolherAluno(id, nome) {
+  document.getElementById('alunoId').value = id;
+  document.getElementById('buscaAluno').value = nome;
+  document.getElementById('resultadosAluno').innerHTML = '';
+  document.getElementById('alunoEscolhido').textContent = 'Selecionado: ' + nome;
+}
+
+async function registrar() {
+  const idAluno = document.getElementById('alunoId').value;
+  const msg = document.getElementById('msg');
+  if (!idAluno) { msg.innerHTML = '<span style="color:var(--danger)">Selecione um aluno.</span>'; return; }
+
+  const dados = {
+    forma_pagamento: document.getElementById('formaPagamento').value,
+    parcela: document.getElementById('parcela').value.trim(),
+    valor: document.getElementById('valor').value,
+    data_pagamento: document.getElementById('dataPagamento').value.trim(),
+    observacao: document.getElementById('observacao').value.trim(),
+  };
+  msg.textContent = 'Registrando...';
+  const r = await fetch(`/api/aluno/${idAluno}/pagamento`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(dados),
+  });
+  const d = await r.json();
+  if (d.erro) { msg.innerHTML = `<span style="color:var(--danger)">${d.erro}</span>`; return; }
+  msg.innerHTML = `<span style="color:var(--success)">Pagamento registrado!</span>`;
 }
 </script></body></html>"""
 
