@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import academia_progresso
 import anexos_email
 import config_store
 import cora_client
@@ -1879,6 +1880,15 @@ class Handler(BaseHTTPRequestHandler):
         if modo == "fechamento" and logic.ja_tem_fechamento(comentarios, turma_nome):
             return {"ja_fechado": True}
 
+        # "Ex-aluno de verdade" (pedido do usuario, 2026-09-16, correcao do
+        # Diogenes): o campo Situacao do Fuctura sozinho nao confirma que o
+        # aluno completou a trilha (Java: J1/J2/JS3/JA4, Python: PY1-4) -
+        # roda de graca aqui porque perfil_aluno() ja foi buscado por
+        # outro motivo (nota de abandono/devedor), sem consulta extra.
+        ex_aluno_de_verdade = academia_progresso.eh_ex_aluno_de_verdade(
+            perfil.get("nome"), perfil.get("status"), perfil.get("turmas_atuais"),
+        )
+
         montar_resumo = logic.montar_resumo_academico_infantil if infantil else logic.montar_resumo_academico
         resumo_academico = montar_resumo(aluno_ata["presencas"])
         texto_acad = resumo_academico["texto"]
@@ -1960,6 +1970,7 @@ class Handler(BaseHTTPRequestHandler):
             # sinais academicos a mais, separados pra tela destacar:
             "alerta_faltas_finais": alerta_finais,
             "nota_faltas_finais": nota_faltas_finais,
+            "ex_aluno_de_verdade": ex_aluno_de_verdade,
             "modalidade": modalidade,
             "nota_online": nota_online,
             # Pedido explicito do usuario (2026-09-08), depois do flood: nada
@@ -2998,6 +3009,10 @@ async function analisar(idAluno) {
   card.querySelector('.detalhe').innerHTML = `
     ${banner(d.devedor_nota, 'danger')}
     ${banner(d.nota_faltas_finais, 'danger')}
+    ${(d.perfil && (d.perfil.status || '').toLowerCase() === 'ex-aluno' && !d.ex_aluno_de_verdade)
+      ? banner('⚠ Fuctura mostra "Ex-aluno" mas o histórico não confirma que completou todos os módulos da trilha (Java: J1/J2/JS3/JA4, Python: PY1-4) — confira antes de considerar concluído.', 'danger')
+      : ''}
+    ${d.ex_aluno_de_verdade ? banner('✓ Completou todos os módulos da trilha — Ex-aluno confirmado de verdade.', 'success') : ''}
     ${banner(d.nota_online, 'warning')}
     ${d.modalidade ? `<div class="fonte" style="margin-bottom:8px;">Modalidade no roster: <b>${d.modalidade}</b></div>` : ''}
     <div><b>Acadêmico</b> <span class="fonte">(pode editar antes de confirmar)</span>:</div>
