@@ -415,12 +415,25 @@ def montar_resumo_academico(presencas_agregadas):
     faltas_finais = sum(1 for p in finais if p["marcacao"] == "falta")
     alerta_faltas_finais = bool(finais) and faltas_finais == AULAS_FINAIS_JANELA
 
+    # Achado do usuario (2026-09-16, respondendo ao Diógenes): se o aluno
+    # faltou a TODAS as aulas (presencas == 0), dizer "faltou as aulas
+    # finais" por cima é redundante - faltar tudo já inclui as finais.
+    # "faltou_tudo" vira o caso prioritario e o unico texto extra e sobre
+    # possivel abandono, sem repetir "aulas finais" - alerta_faltas_finais
+    # (mesma janela de sempre) so aparece como texto quando NAO faltou tudo
+    # (ou seja, o aluno assistiu alguma aula mas abandonou perto do fim -
+    # sinal genuinamente diferente, nao redundante).
+    faltou_tudo = total > 0 and presencas == 0
+    possivel_abandono = faltou_tudo or alerta_faltas_finais
+
     plural = lambda n: "" if n == 1 else "s"
     frase = f"{total} aula{plural(total)} realizada{plural(total)}, compareceu a {presencas} e faltou a {faltas}."
     if online:
         frase += f" Participou de {online} aula(s) online."
-    if alerta_faltas_finais:
-        frase += f" ⚠ Faltou todas as {AULAS_FINAIS_JANELA} aulas finais — padrão de abandono antes do término."
+    if faltou_tudo:
+        frase += " ⚠ Possível abandono — não compareceu a nenhuma aula."
+    elif alerta_faltas_finais:
+        frase += " ⚠ Possível abandono — faltou às últimas aulas seguidas."
     elif faltou_ultimas:
         n = len(ultimas)
         if n == 1:
@@ -435,20 +448,24 @@ def montar_resumo_academico(presencas_agregadas):
     return {
         "texto": frase, "total": total, "presencas": presencas, "faltas": faltas,
         "online": online, "incertos": incertos, "faltou_ultimas": faltou_ultimas,
+        "faltou_tudo": faltou_tudo, "possivel_abandono": possivel_abandono,
         "alerta_faltas_finais": alerta_faltas_finais, "faltas_finais": faltas_finais,
         "janela_finais": AULAS_FINAIS_JANELA,
     }
 
 
 def sugestao_academica(resumo):
-    """Sugestao curta com base so no padrao de frequencia (sem dado financeiro)."""
+    """Sugestao curta com base so no padrao de frequencia (sem dado financeiro).
+
+    Achado do usuario (2026-09-16): esta funcao repetia o mesmo fato que
+    o "texto" de montar_resumo_academico ja diz ("faltou todas as X aulas
+    finais") - quando as duas aparecem juntas (ex: tabela do relatório de
+    turma, uma coluna do lado da outra), lê redundante. Agora só dá a
+    AÇÃO, sem repetir o fato que já está no resumo."""
     if resumo["total"] == 0:
         return ""
-    if resumo.get("alerta_faltas_finais"):
-        return (
-            f"Prioridade — faltou todas as {resumo.get('janela_finais', AULAS_FINAIS_JANELA)} "
-            "aulas finais (possível abandono). Conferir antes de fechar / emitir certificado."
-        )
+    if resumo.get("possivel_abandono"):
+        return "Prioridade — conferir antes de fechar / emitir certificado."
     if resumo["faltou_ultimas"]:
         return "Entrar em contato — faltou às últimas aulas."
     if resumo["faltas"] > resumo["presencas"]:
@@ -475,6 +492,66 @@ def nota_ref_faltas_finais(modalidade):
         f"Atenção: aluno consta como \"{(modalidade or '').strip()}\" nesta turma — REF (refazendo "
         "o módulo). Conferir se as faltas são deste módulo antes de tratar como abandono novo."
     )
+
+
+# Pedido do Diogenes via Caio (2026-09-16): a EQUIPE usa uma convencao
+# informal no proprio NOME do aluno (nao um status oficial do Fuctura -
+# a lista real de status nao tem "Abandono" nenhum, ver
+# QUESTIONARIO_TRAMITES_FUCTURA.md): "." antes do nome = abandonou,
+# "-" antes do nome = refazendo (redundante/complementar a marca REF do
+# roster, ver eh_situacao_ref acima - usar OU como sinal suficiente).
+# CONFIRMADO ao vivo (2026-09-16) que essa marca sozinha NAO e confiavel:
+# 2 alunos reais com "." no nome tinham status "Devedor" e "Advogado" no
+# cadastro, nenhum dos dois "Ex-aluno" - por isso a marca do nome nunca
+# decide nada sozinha, so dispara as duas conferencias que o Diogenes
+# pediu (status real + outra turma no mesmo mes/ano).
+def eh_nome_marcado_abandono(nome):
+    return (nome or "").strip().startswith(".")
+
+
+def eh_nome_marcado_refazendo(nome):
+    return (nome or "").strip().startswith("-")
+
+
+def turmas_no_mesmo_mes_ano(turmas_atuais, turma_atual_nome, data_referencia):
+    """turmas_atuais: lista de {'data','nome'} de perfil_aluno(). Retorna as
+    turmas (exceto a que esta sendo fechada agora) cuja data de matricula
+    cai no MESMO mes/ano de data_referencia (datetime) - sinal de que o
+    aluno pode estar ativo em outro lugar, mesmo tendo abandonado esta
+    turma especifica (2ª conferencia pedida pelo Diogenes pro "."). Usa a
+    data da AULA MAIS RECENTE da ata como referencia (mes/ano em que o
+    "abandono" foi observado), nao a data de hoje."""
+    if not data_referencia:
+        return []
+    alvo_norm = norm(turma_atual_nome or "")
+    encontradas = []
+    for t in turmas_atuais or []:
+        if norm(t.get("nome", "")) == alvo_norm:
+            continue
+        d = _parse_data_segura(t.get("data", ""))
+        if d and d.month == data_referencia.month and d.year == data_referencia.year:
+            encontradas.append(t)
+    return encontradas
+
+
+def nota_verificacao_abandono(nome_aluno, status_atual, turmas_no_mesmo_periodo):
+    """Nota de conferência pro alerta de possível abandono no Fechamento -
+    baseada no padrão real que o Diógenes gostou (comentário do aluno
+    Miguel Tomaz, turma JA4, 15/09/2026: "Faltou todas as aulas Padrão de
+    abandono antes do término (verique que é ex aluno) Revisa na ata") -
+    só que automatizada: como perfil_aluno() e as turmas já foram
+    buscados pelo Fechamento de qualquer forma, o sistema CONFERE de
+    verdade em vez de só lembrar o funcionário de conferir."""
+    status_norm = (status_atual or "").strip().lower()
+    if status_norm == "ex-aluno":
+        partes = ["Cadastro já está como Ex-aluno."]
+    else:
+        partes = [f"⚠ Cadastro está como \"{status_atual or '(não definido)'}\", não Ex-aluno — confira se deveria atualizar."]
+    if turmas_no_mesmo_periodo:
+        nomes = ", ".join(t["nome"] for t in turmas_no_mesmo_periodo)
+        partes.append(f"⚠ Também está em outra turma no mesmo mês: {nomes} — abandono pode ser só desta turma.")
+    partes.append("Revisar na ata antes de decidir.")
+    return " ".join(partes)
 
 
 # montar_resumo_academico_infantil/sugestao_academica_infantil: ponto de

@@ -25,6 +25,7 @@ import config_store
 import cora_client
 import drive_client
 import email_cobranca
+import extrato_bancario
 import gmail_client
 import manutencao
 import fechamento_logic as logic
@@ -1735,6 +1736,13 @@ class Handler(BaseHTTPRequestHandler):
             self._registrar_pagamento(sessao, id_aluno, body)
             return
 
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/auditar-pagamentos"):
+            id_aluno = parsed.path.split("/")[3]
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            self._auditar_pagamentos(sessao, id_aluno, body)
+            return
+
         if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/rascunho-gmail"):
             id_aluno = parsed.path.split("/")[3]
             length = int(self.headers.get("Content-Length", 0))
@@ -1875,18 +1883,22 @@ class Handler(BaseHTTPRequestHandler):
         resumo_academico = montar_resumo(aluno_ata["presencas"])
         texto_acad = resumo_academico["texto"]
 
-        # Sinal A MAIS no FECHAMENTO: faltou o bloco de aulas finais (ver
-        # montar_resumo_academico -> alerta_faltas_finais). O texto já traz
-        # a frase; aqui só expõe o booleano + uma nota curta pra tela
-        # destacar em vez de o funcionário ter que ler o resumo inteiro.
-        alerta_finais = bool(resumo_academico.get("alerta_faltas_finais"))
+        # Sinal A MAIS no FECHAMENTO: possível abandono (faltou tudo OU
+        # faltou o bloco de aulas finais - ver montar_resumo_academico ->
+        # possivel_abandono). O texto já traz a frase, sem repetir o fato
+        # aqui (achado do usuário 2026-09-16: dizer duas vezes que faltou
+        # tudo/faltou as finais é redundante) - a nota só traz CONFERÊNCIA:
+        # mesmo padrão que o Diógenes gostou num comentário real (aluno
+        # Miguel Tomaz, turma JA4) - "confira se é ex-aluno" e "revise na
+        # ata" - só que automatizado: perfil_aluno() já foi buscado, então
+        # o sistema CONFERE o status de verdade em vez de só lembrar.
+        alerta_finais = bool(resumo_academico.get("possivel_abandono"))
         nota_faltas_finais = None
         if alerta_finais:
-            nota_faltas_finais = (
-                f"Faltou todas as {resumo_academico.get('janela_finais', 3)} aulas finais da turma "
-                "— possível abandono antes do término. Conferir cancelamento/estorno e não emitir "
-                "certificado sem checar."
-            )
+            datas_validas = [d for d in (logic._parse_data_segura(p["data"]) for p in aluno_ata["presencas"]) if d]
+            data_referencia = max(datas_validas) if datas_validas else None
+            turmas_mesmo_periodo = logic.turmas_no_mesmo_mes_ano(perfil.get("turmas_atuais"), turma_nome, data_referencia)
+            nota_faltas_finais = logic.nota_verificacao_abandono(perfil.get("nome"), perfil.get("status"), turmas_mesmo_periodo)
 
         # Pedido do usuario (2026-09-12), respondendo a duvida sobre alunos
         # marcados "REF"/"MONITOR" no campo de situacao do roster: REF =
@@ -2011,7 +2023,7 @@ class Handler(BaseHTTPRequestHandler):
             # O comentario de Fechamento vem SEMPRE, e SEMPRE ANTES do
             # financeiro (pedido do usuario, 2026-09-10 - a ordem importa).
             status_acad = client.gravar_comentario(
-                id_aluno, f"{prefixo_academico}{previa['rotulo']} — {turma_nome}", "3", resumo_academico_final
+                id_aluno, f"{prefixo_academico}{(previa['rotulo'] + ' — ' + turma_nome).upper()}", "3", resumo_academico_final
             )
             # O comentario financeiro so vem se houver questao financeira de
             # verdade (inconsistencia ou sinal de devedor) - se o
@@ -2021,7 +2033,7 @@ class Handler(BaseHTTPRequestHandler):
             status_fin = None
             if gravar_fin:
                 status_fin = client.gravar_comentario(
-                    id_aluno, f"{prefixo_financeiro}Financeiro ({previa['rotulo']}) — {turma_nome}",
+                    id_aluno, f"{prefixo_financeiro}{('Financeiro (' + previa['rotulo'] + ') — ' + turma_nome).upper()}",
                     previa["tipo_fin"], resumo_financeiro_final,
                 )
 
@@ -2260,7 +2272,11 @@ class Handler(BaseHTTPRequestHandler):
         cada chamada grava exatamente 1 comentario em 1 aluno, por acao
         direta do usuario, nunca em loop)."""
         tipo = _texto(body.get("tipo"))
-        assunto = _texto(body.get("assunto"))
+        # Pedido do usuario (2026-09-16): titulo de comentario sempre em
+        # MAIUSCULO (convencao real da equipe) - forcado aqui pra valer
+        # nao importa como o funcionario digitou. turma_nome (autocomplete
+        # de turma) fica com a caixa original - so o assunto/titulo muda.
+        assunto = _texto(body.get("assunto")).upper()
         descricao = _texto(body.get("descricao"))
         turma_id = _texto(body.get("turma_id")) or None
         turma_nome = _texto(body.get("turma_nome")) or None
@@ -2295,7 +2311,7 @@ class Handler(BaseHTTPRequestHandler):
         Clique em "Salvar edição" e a confirmacao humana desse item
         especifico (mesmo padrao de _criar_comentario_aluno)."""
         tipo = _texto(body.get("tipo"))
-        assunto = _texto(body.get("assunto"))
+        assunto = _texto(body.get("assunto")).upper()
         descricao = _texto(body.get("descricao"))
         turma_id = _texto(body.get("turma_id")) or None
         turma_nome = _texto(body.get("turma_nome")) or None
@@ -2349,7 +2365,7 @@ class Handler(BaseHTTPRequestHandler):
             texto = f'Situação alterada manualmente de "{label_atual}" para "{label_novo}".'
             if motivo:
                 texto += f" Motivo: {motivo}"
-            client.gravar_comentario(id_aluno, "Situação alterada manualmente", "3", texto)
+            client.gravar_comentario(id_aluno, "SITUAÇÃO ALTERADA MANUALMENTE", "3", texto)
             self._send_json({"ok": True, "situacao_anterior": label_atual, "situacao_nova": label_novo})
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
@@ -2502,13 +2518,42 @@ class Handler(BaseHTTPRequestHandler):
         try:
             client = sessao["client"]
             status_code = client.gravar_comentario(
-                id_aluno, "Pagamento Realizado", "11", texto,
+                id_aluno, "PAGAMENTO REALIZADO", "11", texto,
                 valor_contratado=valor_fmt, forma_pagamento=forma_pagamento,
             )
             if status_code != 200:
                 self._send_json({"erro": f"O Fuctura respondeu com status {status_code}."}, 500)
                 return
             self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+
+    def _auditar_pagamentos(self, sessao, id_aluno, body):
+        """Confere os comentários "-Pagamento Realizado" deste aluno
+        contra um extrato bancário colado em CSV - pedido do usuário
+        (2026-09-16), direção confirmada com o Diógenes: o comentário do
+        Fuctura é quem precisa ser confirmado contra o extrato (fonte de
+        verdade), não o contrário. Casamento só por data+valor (nomes em
+        PIX vêm truncados no extrato, não são confiáveis pra casar - ver
+        extrato_bancario.py). Nada é gravado - só leitura/conferência."""
+        extrato_csv = _texto(body.get("extrato_csv"))
+        if not extrato_csv:
+            self._send_json({"erro": "Cole o extrato em CSV."}, 400)
+            return
+        try:
+            extrato = extrato_bancario.parsear_csv_extrato(extrato_csv)
+            if not extrato:
+                self._send_json({"erro": "Não consegui ler nenhuma linha válida (data + valor) do CSV colado."}, 400)
+                return
+            comentarios = sessao["client"].comentarios_aluno(id_aluno)
+            pagamentos = extrato_bancario.auditar_pagamentos_aluno(comentarios, extrato)
+            for p in pagamentos:
+                if p["data_extraida"]:
+                    p["data_extraida"] = p["data_extraida"].strftime("%d/%m/%Y")
+                if p["confirmacao"]["melhor_match"]:
+                    m = p["confirmacao"]["melhor_match"]
+                    p["confirmacao"]["melhor_match"] = {**m, "data": m["data"].strftime("%d/%m/%Y")}
+            self._send_json({"pagamentos": pagamentos, "total_linhas_extrato": len(extrato)})
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
 
@@ -2644,7 +2689,7 @@ class Handler(BaseHTTPRequestHandler):
                 if valor:
                     linhas.append(f"{rotulo}: {valor}")
             client.gravar_comentario(
-                id_aluno, "Cadastro — Dados Complementares", "3", "\n".join(linhas),
+                id_aluno, "CADASTRO — DADOS COMPLEMENTARES", "3", "\n".join(linhas),
             )
             self._send_json({"ok": True, "id_aluno": id_aluno})
         except Exception as e:
@@ -3719,6 +3764,22 @@ async function selecionar(idAluno) {
     </div>
 
     <div class="card">
+      <h3 style="margin-top:0;">Auditar pagamentos contra o extrato bancário</h3>
+      <p class="fonte">
+        Pedido do usuário (2026-09-16): o comentário "-Pagamento Realizado" gravado no Fuctura precisa ser
+        CONFIRMADO contra o extrato real (data + valor) — não o contrário. Nomes em PIX vêm truncados no extrato
+        (ex: "PIX TRANSF HEROS M13/10"), então a conferência é só por data + valor, nunca por nome.
+        Cole abaixo o extrato exportado como CSV (3 colunas por linha: data;descrição;valor — sem cabeçalho
+        obrigatório, linhas de saldo/separador são ignoradas sozinhas).
+      </p>
+      <textarea id="extratoCsv-${idAluno}" rows="5" style="width:100%; font-family:monospace; font-size:0.8rem;" placeholder="21/08/2025;PIX TRANSF HEROS M21/08;R$ 377,00"></textarea>
+      <div style="margin-top:8px;">
+        <button class="acao" onclick="auditarPagamentos('${idAluno}')">Auditar pagamentos deste aluno</button>
+      </div>
+      <div id="auditoriaPagamentos-${idAluno}" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card">
       <h3 style="margin-top:0;">Comentários (${d.comentarios.length})</h3>
       ${d.comentarios.map(c => `
         <div class="comentario">
@@ -3857,6 +3918,40 @@ async function carregarResumo(idAluno, comIa) {
   html += `<b style="display:block; margin-top:12px;">Pagamentos / cobranças / desistência</b>`;
   html += `<div class="comentario" style="white-space:pre-wrap;">${d.pagamentos_desistencia}</div>`;
   div.innerHTML = html;
+}
+
+async function auditarPagamentos(idAluno) {
+  const div = document.getElementById('auditoriaPagamentos-' + idAluno);
+  const csv = document.getElementById('extratoCsv-' + idAluno).value.trim();
+  if (!csv) { div.innerHTML = '<div class="fonte" style="color:var(--danger)">Cole o extrato em CSV primeiro.</div>'; return; }
+  div.innerHTML = '<div class="fonte">Conferindo...</div>';
+  const r = await fetch(`/api/aluno/${idAluno}/auditar-pagamentos`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ extrato_csv: csv }),
+  });
+  const d = await r.json();
+  if (d.erro) { div.innerHTML = `<div class="fonte" style="color:var(--danger)">Erro: ${d.erro}</div>`; return; }
+  if (!d.pagamentos.length) {
+    div.innerHTML = '<div class="fonte">Nenhum comentário "-Pagamento Realizado" com valor identificável no histórico deste aluno.</div>';
+    return;
+  }
+  div.innerHTML = `
+    <table>
+      <thead><tr><th>Data (comentário)</th><th>Valor</th><th>Data usada</th><th>Confirmado no extrato?</th></tr></thead>
+      <tbody>
+        ${d.pagamentos.map(p => `
+          <tr>
+            <td>${p.data_comentario}</td>
+            <td>R$ ${p.valor_extraido.toFixed(2).replace('.', ',')}</td>
+            <td>${p.data_extraida || '—'}${p.data_e_aproximada ? ' (aproximada — sem data explícita no texto)' : ''}</td>
+            <td style="color:${p.confirmacao.confirmado ? 'var(--success)' : 'var(--danger)'}">
+              ${p.confirmacao.confirmado ? `Sim (diferença de ${p.confirmacao.diferenca_dias} dia(s))` : '⚠ NÃO encontrado no extrato'}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div class="fonte" style="margin-top:6px;">Conferência só por data + valor (nomes em PIX vêm truncados no extrato, não são confiáveis pra casar).</div>
+  `;
 }
 
 async function mudarSituacao(idAluno) {

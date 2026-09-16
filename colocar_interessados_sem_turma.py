@@ -154,8 +154,8 @@ def processar_aluno(client, id_turma, id_aluno, nome, progresso):
         return
 
     status = client.gravar_comentario(
-        id_aluno, NOME_TURMA_TRIAGEM, "15", texto_final,
-        turma_id=id_turma, valor_contratado="0,00", forma_pagamento="---",
+        id_aluno, NOME_TURMA_TRIAGEM.upper(), "15", texto_final,
+        turma_id=id_turma, valor_contratado="0,00", forma_pagamento="---", turma_nome=NOME_TURMA_TRIAGEM,
     )
     if status != 200:
         print(f"ERRO: status HTTP {status} ao gravar.")

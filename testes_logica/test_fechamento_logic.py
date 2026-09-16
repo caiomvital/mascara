@@ -148,7 +148,10 @@ def teste_alerta_faltas_finais_dispara_quando_falta_o_bloco_final():
     relatar(
         "alerta_faltas_finais: dispara ao faltar as 3 aulas finais de uma turma de 5",
         r["alerta_faltas_finais"] is True and r["faltas_finais"] == 3
-        and "aulas finais" in r["texto"] and "Faltou as últimas 2 aulas" not in r["texto"],
+        # achado do usuario (2026-09-16): texto simplificado, sem repetir
+        # "aulas finais" com o mesmo detalhe 2x (ver sugestao_academica) -
+        # so precisa dizer que e possivel abandono, uma vez.
+        and "Possível abandono" in r["texto"] and "Faltou as últimas 2 aulas" not in r["texto"],
         f"resumo: {r}",
     )
 
@@ -220,7 +223,9 @@ def teste_sugestao_academica_escala_no_alerta_de_faltas_finais():
     s = logic.sugestao_academica(r)
     relatar(
         "sugestao_academica: no alerta de faltas finais vira uma sugestão de prioridade (não a genérica)",
-        "aulas finais" in s and "certificado" in s,
+        # achado do usuario (2026-09-16): sugestao nao repete mais o fato
+        # ("faltou X aulas finais") que o texto do resumo ja diz - so a acao.
+        "Prioridade" in s and "certificado" in s,
         f"sugestão: {s!r}",
     )
 
@@ -664,6 +669,133 @@ def teste_nota_ref_faltas_finais_cita_a_modalidade_recebida():
     )
 
 
+# ---------------------------------------------------------------------------
+# Achado do usuario (2026-09-16): "se faltou TODAS as aulas, obviamente
+# faltou as finais tambem, entao nao precisa dizer as duas coisas" - o
+# caso mais forte (faltou tudo) tem que virar um texto SO, sem repetir a
+# linguagem de "aulas finais" que so faz sentido pro caso mais fraco
+# (fartou so o bloco final, tendo comparecido antes).
+# ---------------------------------------------------------------------------
+def teste_faltou_tudo_nao_repete_linguagem_de_aulas_finais():
+    presencas = [_aula(f"0{i}/08/2026", "falta") for i in range(1, 4)]  # 3 aulas, faltou todas
+    r = logic.montar_resumo_academico(presencas)
+    relatar(
+        "montar_resumo_academico: faltou tudo (0 presenças) marca faltou_tudo e possivel_abandono",
+        r["faltou_tudo"] is True and r["possivel_abandono"] is True,
+        f"resumo: {r}",
+    )
+    relatar(
+        "montar_resumo_academico: faltou tudo NÃO usa a frase de 'aulas finais' - faltar tudo já é óbvio, não repete",
+        "aulas finais" not in r["texto"] and "seguidas" not in r["texto"] and "Possível abandono" in r["texto"],
+        f"texto: {r['texto']!r}",
+    )
+
+
+def teste_faltou_tudo_com_apenas_1_aula_ainda_e_possivel_abandono():
+    r = logic.montar_resumo_academico([_aula("01/08/2026", "falta")])
+    relatar(
+        "montar_resumo_academico: mesmo com só 1 aula (abaixo da janela de 3), faltar essa 1 já é 'faltou tudo'",
+        r["faltou_tudo"] is True and r["possivel_abandono"] is True and r["alerta_faltas_finais"] is False,
+        f"resumo: {r}",
+    )
+
+
+def teste_sugestao_academica_nao_repete_fato_do_resumo():
+    presencas = [
+        _aula("01/08/2026", "presenca"),
+        _aula("15/08/2026", "falta"), _aula("22/08/2026", "falta"), _aula("29/08/2026", "falta"),
+    ]
+    r = logic.montar_resumo_academico(presencas)
+    s = logic.sugestao_academica(r)
+    relatar(
+        "sugestao_academica não repete 'aulas finais' (o resumo já diz isso) - só a ação",
+        "aulas finais" not in s,
+        f"sugestão: {s!r}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pedido do Diogenes via Caio (2026-09-16): "." antes do nome = abandono,
+# "-" antes do nome = refazendo - marca informal da equipe, NAO status
+# oficial do Fuctura. Confirmado ao vivo que a marca sozinha nao e
+# confiavel (2 alunos reais com "." tinham status Devedor/Advogado, nao
+# Ex-aluno) - por isso a marca nunca decide nada sozinha, so dispara as
+# conferencias (status real + outra turma no mesmo mes/ano).
+# ---------------------------------------------------------------------------
+def teste_eh_nome_marcado_abandono_e_refazendo():
+    relatar(
+        "eh_nome_marcado_abandono: reconhece '.' no início do nome",
+        logic.eh_nome_marcado_abandono(".MIGUEL VINICIUS LOPES SOARES") is True,
+        "",
+    )
+    relatar(
+        "eh_nome_marcado_abandono: nome sem '.' não é marcado",
+        logic.eh_nome_marcado_abandono("MIGUEL TOMAZ APOLONIO DE SOUZA") is False,
+        "",
+    )
+    relatar(
+        "eh_nome_marcado_refazendo: reconhece '-' no início do nome",
+        logic.eh_nome_marcado_refazendo("-JOAO DA SILVA") is True,
+        "",
+    )
+    relatar(
+        "eh_nome_marcado_refazendo: nome sem '-' não é marcado",
+        logic.eh_nome_marcado_refazendo("JOAO DA SILVA") is False,
+        "",
+    )
+
+
+def teste_turmas_no_mesmo_mes_ano_acha_e_exclui_a_turma_atual():
+    import datetime as dt
+    turmas_atuais = [
+        {"data": "10/08/2026", "nome": "J1 08/07/25 TER N"},  # a que está sendo fechada agora - não deve contar
+        {"data": "15/08/2026", "nome": "JS3 30/04/26 QUI N"},  # outra turma, mesmo mês/ano - deve contar
+        {"data": "20/01/2025", "nome": "J2 09/12/25 TER N"},  # outro mês/ano - não deve contar
+    ]
+    encontradas = logic.turmas_no_mesmo_mes_ano(turmas_atuais, "J1 08/07/25 TER N", dt.datetime(2026, 8, 20))
+    relatar(
+        "turmas_no_mesmo_mes_ano: acha só a turma de mesmo mês/ano, exclui a que está sendo fechada",
+        len(encontradas) == 1 and encontradas[0]["nome"] == "JS3 30/04/26 QUI N",
+        f"encontradas: {encontradas}",
+    )
+
+
+def teste_turmas_no_mesmo_mes_ano_sem_data_referencia_nao_quebra():
+    relatar(
+        "turmas_no_mesmo_mes_ano: sem data de referência, devolve lista vazia (não quebra)",
+        logic.turmas_no_mesmo_mes_ano([{"data": "10/08/2026", "nome": "X"}], "Y", None) == [],
+        "",
+    )
+
+
+def teste_nota_verificacao_abandono_confere_status_de_verdade():
+    nota_ok = logic.nota_verificacao_abandono("MIGUEL TOMAZ", "Ex-aluno", [])
+    relatar(
+        "nota_verificacao_abandono: quando o cadastro já é Ex-aluno, confirma (não vira alerta)",
+        "já está como Ex-aluno" in nota_ok and "⚠" not in nota_ok.split("Revisar")[0].split("Ex-aluno")[0],
+        f"nota: {nota_ok!r}",
+    )
+    nota_alerta = logic.nota_verificacao_abandono(".MIGUEL VINICIUS", "Devedor", [])
+    relatar(
+        "nota_verificacao_abandono: quando NÃO é Ex-aluno, alerta com o status real (acha a inconsistência de verdade)",
+        "⚠" in nota_alerta and "Devedor" in nota_alerta,
+        f"nota: {nota_alerta!r}",
+    )
+    nota_outra_turma = logic.nota_verificacao_abandono(
+        "MIGUEL", "Devedor", [{"data": "15/08/2026", "nome": "JS3 30/04/26 QUI N"}],
+    )
+    relatar(
+        "nota_verificacao_abandono: cita a outra turma no mesmo período quando encontrada",
+        "JS3 30/04/26 QUI N" in nota_outra_turma,
+        f"nota: {nota_outra_turma!r}",
+    )
+    relatar(
+        "nota_verificacao_abandono: sempre lembra de revisar na ata (mesmo padrão que o Diógenes gostou)",
+        "Revisar na ata" in nota_ok and "Revisar na ata" in nota_alerta,
+        "",
+    )
+
+
 def main():
     print("Rodando testes de fechamento_logic.py (funções sem teste anterior)...\n")
     teste_telefone_casa_com_variacao_de_ddi_ddd()
@@ -713,6 +845,13 @@ def main():
     teste_eh_situacao_ref_reconhece_ref_isolado_e_combinado()
     teste_eh_situacao_ref_nao_confunde_com_outras_palavras()
     teste_nota_ref_faltas_finais_cita_a_modalidade_recebida()
+    teste_faltou_tudo_nao_repete_linguagem_de_aulas_finais()
+    teste_faltou_tudo_com_apenas_1_aula_ainda_e_possivel_abandono()
+    teste_sugestao_academica_nao_repete_fato_do_resumo()
+    teste_eh_nome_marcado_abandono_e_refazendo()
+    teste_turmas_no_mesmo_mes_ano_acha_e_exclui_a_turma_atual()
+    teste_turmas_no_mesmo_mes_ano_sem_data_referencia_nao_quebra()
+    teste_nota_verificacao_abandono_confere_status_de_verdade()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

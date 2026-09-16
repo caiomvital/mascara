@@ -276,7 +276,15 @@ def houve_sinal_estorno_pendente(comentarios):
     return True, f"{ultimo['titulo']} ({ultimo['data']})"
 
 
-ASSUNTO_ANALISE_AUTOMATICA = "Reconciliação Devedor/Turma de Controle"
+# Pedido do usuario (2026-09-16): titulo de comentario gravado pelo
+# sistema sempre em MAIUSCULO - convencao real da equipe (confirmada
+# olhando o historico de verdade: "FECHAMENTO...", "GERAR BOLETOS",
+# "ACOMPANHAMENTO" etc., tudo em caixa alta). Comentarios ANTIGOS (antes
+# desta mudanca) podem ter vindo em outra caixa - por isso toda
+# comparacao contra este texto usa .upper() dos dois lados (ver
+# _e_titulo_analise), nunca "==" direto, pra nao parar de reconhecer
+# analise ja gravada com o titulo antigo.
+ASSUNTO_ANALISE_AUTOMATICA = "RECONCILIAÇÃO DEVEDOR/TURMA DE CONTROLE"
 
 # Pedido do usuario (2026-09-09): quando o funcionario edita o texto da
 # analise sugerida antes de gravar (em vez de aceitar como veio), o assunto
@@ -328,7 +336,7 @@ def _e_titulo_analise(titulo):
     -IA-/-MOD- (ver remover_prefixo_edicao) antes de comparar. Compartilhado
     por data_ultima_analise_automatica (achar a ultima analise) e por
     aplicar_acao (achar o comentario pra mesclar a matricula)."""
-    titulo = remover_prefixo_edicao(titulo)
+    titulo = remover_prefixo_edicao(titulo).upper()
     return titulo == ASSUNTO_ANALISE_AUTOMATICA or titulo.startswith(ASSUNTO_ANALISE_AUTOMATICA + " ")
 
 
@@ -391,7 +399,7 @@ def data_ultimo_contato(comentarios):
     (ver _registrar_contato/registrarContato em app.py - grava tipo '3'
     com esse título exato), ou None se nenhum contato foi registrado
     ainda."""
-    contatos = [c for c in comentarios if c["titulo"] == "Ocorrência de Contato"]
+    contatos = [c for c in comentarios if c["titulo"].strip().upper() == "OCORRÊNCIA DE CONTATO"]
     return contatos[-1]["data"] if contatos else None
 
 
@@ -584,6 +592,10 @@ _TITULOS_IGNORADOS_NA_AUDITORIA = {
     # evitar.
     ASSUNTO_RESUMO_DEBITO_FLOOD,
 }
+# normalizado em MAIUSCULO uma vez so, pra comparacao case-insensitive em
+# _e_comentario_automatico (titulos antigos podem nao estar em caixa alta
+# - ver nota em ASSUNTO_ANALISE_AUTOMATICA).
+_TITULOS_IGNORADOS_NA_AUDITORIA_UPPER = {t.upper() for t in _TITULOS_IGNORADOS_NA_AUDITORIA}
 
 
 def _e_comentario_automatico(titulo):
@@ -602,7 +614,7 @@ def _e_comentario_automatico(titulo):
     antes (ver ja_com_advogado): o texto do proprio comentario automatico
     menciona "advogado" pra alguns casos, e sem esse reconhecimento ele
     passaria a contar como um sinal humano de novo."""
-    return _e_titulo_analise(titulo) or remover_prefixo_edicao(titulo) in _TITULOS_IGNORADOS_NA_AUDITORIA
+    return _e_titulo_analise(titulo) or remover_prefixo_edicao(titulo).upper() in _TITULOS_IGNORADOS_NA_AUDITORIA_UPPER
 
 
 def detectar_inconsistencias(analise, comentarios):
@@ -874,7 +886,7 @@ def aplicar_acao(client, analise):
             )
         else:
             status_code = client.gravar_comentario(
-                analise["id_aluno"], "Matrícula em turma de controle (reconciliação)", "15",
+                analise["id_aluno"], "MATRÍCULA EM TURMA DE CONTROLE (RECONCILIAÇÃO)", "15",
                 _TEXTO_MATRICULA_RECONCILIACAO, turma_id=acao["turma_id"], turma_nome=acao["turma_nome"],
             )
         return status_code == 200, f"Matriculado em {acao['turma_nome']}"
