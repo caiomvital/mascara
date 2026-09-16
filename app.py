@@ -2365,6 +2365,32 @@ class Handler(BaseHTTPRequestHandler):
             if status_atual == novo_status:
                 self._send_json({"erro": f'O aluno já está em "{STATUS_ALUNO[novo_status]}".'}, 400)
                 return
+
+            # Restrição pedida pelo usuário (2026-09-16): "impedir que
+            # alguém tirando eu ou Diógenes possa marcar como ex-aluno sem
+            # atender aos filtros" - so administradores (config_store,
+            # hoje só Caio/Diógenes) podem marcar "Ex-aluno" (código "22")
+            # sem restrição; qualquer outro funcionário só consegue se o
+            # aluno realmente bate os critérios reais (completou todos os
+            # módulos da trilha, não é Devedor, sem marca de abandono/
+            # refazendo no nome agora - ver academia_progresso.
+            # eh_ex_aluno_de_verdade, a mesma checagem já mostrada no
+            # Fechamento de Turma).
+            if novo_status == "22" and not sessao["is_admin"]:
+                perfil = client.perfil_aluno(id_aluno)
+                if not academia_progresso.eh_ex_aluno_de_verdade(
+                    perfil.get("nome"), status_atual, perfil.get("turmas_atuais"),
+                ):
+                    self._send_json({
+                        "erro": (
+                            'Este aluno ainda não atende aos critérios reais de "Ex-aluno" '
+                            "(completar todos os módulos da trilha, não ser Devedor, sem marca "
+                            "de abandono/refazendo no nome) - só um administrador (Caio/Diógenes) "
+                            "pode marcar Ex-aluno fora desses critérios."
+                        ),
+                    }, 403)
+                    return
+
             label_atual = STATUS_ALUNO.get(status_atual, "(não definido)")
             label_novo = STATUS_ALUNO[novo_status]
 
