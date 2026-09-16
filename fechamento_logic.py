@@ -582,6 +582,17 @@ def montar_relatorio_turma(turma_identificada, professor, alunos_processados, ro
     if infantil:
         rotulo = f"{rotulo} (Infantil)"
 
+    # Pedido do Diógenes via Caio (2026-09-16): categoria rápida por aluno
+    # (Refazendo/Abandono/Primeira vez, só pela marca do nome - mesmo
+    # método manual que ele usa) + o indicador de "funil" da turma inteira
+    # (quantos estão em primeira vez de verdade, avançando na sequência) -
+    # turma com poucos "primeira vez" é sinal pra avaliar se vale abrir a
+    # próxima turma do módulo seguinte (exemplo dele: J2 com 15
+    # matriculados e só 3 prontos pra avançar não justifica sozinho abrir
+    # JS3/JA4). So usa o nome (import local pra evitar ciclo de import,
+    # ja que academia_progresso.py importa fechamento_logic).
+    import academia_progresso as academia
+
     linhas_tabela = []
     n_precisa_atencao = 0
     for a in alunos_processados:
@@ -592,17 +603,25 @@ def montar_relatorio_turma(turma_identificada, professor, alunos_processados, ro
         linhas_tabela.append({
             "nome": a["nome_fuctura"], "id_aluno": a["id_aluno"],
             "resumo": resumo["texto"], "sugestao": sugestao,
+            "categoria": academia.categoria_nome(a["nome_fuctura"]),
         })
 
     n_aulas = 0
     for a in alunos_processados:
         n_aulas = max(n_aulas, sum(1 for p in a["presencas"] if p["marcacao"] != "sem_registro"))
 
+    funil = academia.indicador_funil_turma([{"nome": a["nome_fuctura"]} for a in alunos_processados])
+
     observacoes = []
     if n_precisa_atencao:
         observacoes.append(f"{n_precisa_atencao} aluno(s) com sugestão de contato/atenção.")
     else:
         observacoes.append("Nenhum aluno com sinal de atenção nesta leitura da ata.")
+    if funil["total"] and funil["proporcao_primeira_vez"] < academia.LIMIAR_FUNIL_BAIXO:
+        observacoes.append(
+            f"⚠ Só {funil['primeira_vez']} de {funil['total']} aluno(s) em primeira vez nesta turma "
+            "— avalie se compensa abrir a próxima turma da sequência."
+        )
 
     return {
         "titulo": f"{rotulo} de Turma {turma_identificada}",
@@ -611,6 +630,7 @@ def montar_relatorio_turma(turma_identificada, professor, alunos_processados, ro
         "quantidade_aulas": n_aulas,
         "tabela": linhas_tabela,
         "observacoes": " ".join(observacoes),
+        "funil": funil,
     }
 
 

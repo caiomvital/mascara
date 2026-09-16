@@ -328,6 +328,42 @@ def teste_montar_relatorio_turma_infantil_marca_rotulo():
     )
 
 
+def teste_montar_relatorio_turma_categoriza_por_marca_do_nome():
+    # mesma proporção da turma real .JA4 09/07/26 Qui (Yago): 9 "-", 8 ".", 4 sem marca
+    alunos = (
+        [{"id_aluno": str(i), "nome_fuctura": f"-REFAZENDO{i}", "presencas": []} for i in range(9)]
+        + [{"id_aluno": str(100 + i), "nome_fuctura": f".ABANDONO{i}", "presencas": []} for i in range(8)]
+        + [{"id_aluno": str(200 + i), "nome_fuctura": f"PRIMEIRAVEZ{i}", "presencas": []} for i in range(4)]
+    )
+    relatorio = logic.montar_relatorio_turma("JA4 09/07/26 Qui", "YAGO", alunos)
+    categorias = [linha["categoria"] for linha in relatorio["tabela"]]
+    relatar(
+        "montar_relatorio_turma: categoriza cada linha pela marca do nome (Refazendo/Abandono/Primeira vez)",
+        categorias.count("Refazendo") == 9 and categorias.count("Abandono") == 8 and categorias.count("Primeira vez") == 4,
+        f"categorias: {categorias}",
+    )
+    relatar(
+        "montar_relatorio_turma: inclui o indicador de funil (mesma proporção 4/21 da turma real)",
+        relatorio["funil"]["total"] == 21 and relatorio["funil"]["primeira_vez"] == 4,
+        f"funil: {relatorio['funil']}",
+    )
+    relatar(
+        "montar_relatorio_turma: proporção baixa de 'primeira vez' vira observação de alerta (pedido do Diógenes)",
+        "avalie se compensa abrir a próxima turma" in relatorio["observacoes"],
+        f"observações: {relatorio['observacoes']!r}",
+    )
+
+
+def teste_montar_relatorio_turma_sem_alerta_de_funil_quando_proporcao_normal():
+    alunos = [{"id_aluno": str(i), "nome_fuctura": f"ALUNO{i}", "presencas": []} for i in range(10)]
+    relatorio = logic.montar_relatorio_turma("J1 08/07/25 TER N", "PROF TESTE", alunos)
+    relatar(
+        "montar_relatorio_turma: com todos em 'primeira vez' (proporção alta), NÃO alerta sobre o funil",
+        "avalie se compensa abrir a próxima turma" not in relatorio["observacoes"],
+        f"observações: {relatorio['observacoes']!r}",
+    )
+
+
 def teste_regra_urgente_ja_em_turma_de_controle_nao_dispara():
     perfil = {"id_aluno": "1"}
     urgente, msg = logic.regra_urgente_devedor_advogado(perfil, tem_debito=True, ids_turmas_controle={"1"})
@@ -824,6 +860,8 @@ def main():
     teste_eh_turma_infantil_reconhece_nomes_reais_biblia_3d()
     teste_eh_turma_infantil_nao_reconhece_turmas_de_adulto()
     teste_montar_relatorio_turma_infantil_marca_rotulo()
+    teste_montar_relatorio_turma_categoriza_por_marca_do_nome()
+    teste_montar_relatorio_turma_sem_alerta_de_funil_quando_proporcao_normal()
     teste_checagem_financeira_detecta_pagamento_por_tipo()
     teste_checagem_financeira_detecta_pagamento_por_texto_livre()
     teste_checagem_financeira_pagamento_sem_valor_em_reais_e_ignorado()

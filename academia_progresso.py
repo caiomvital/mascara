@@ -116,6 +116,25 @@ def eh_ex_aluno_de_verdade(nome_aluno, status_atual, turmas_atuais, trilha=None)
     return curso_completo(turmas_atuais, trilha)
 
 
+LIMIAR_FUNIL_BAIXO = 0.3  # abaixo disso, vale avaliar se compensa abrir a próxima turma (ajustável)
+
+
+def categoria_nome(nome):
+    """Classificação rápida só pela marca do nome (sem consultar o
+    Fuctura) - o mesmo método manual que o Diógenes usa: "-" no nome =
+    Refazendo, "." no nome = Abandono, sem marca = Primeira vez. Pra
+    confirmação mais forte de "completou a academia de verdade" (exige
+    o histórico real de turmas), ver eh_ex_aluno_de_verdade - mais lento
+    (precisa de perfil_aluno), por isso fica separado desta função
+    rápida usada no relatório inicial da turma (antes de consultar o
+    Fuctura aluno por aluno)."""
+    if logic.eh_nome_marcado_refazendo(nome):
+        return "Refazendo"
+    if logic.eh_nome_marcado_abandono(nome):
+        return "Abandono"
+    return "Primeira vez"
+
+
 def indicador_funil_turma(alunos_da_turma):
     """alunos_da_turma: lista de {'nome'} (ou qualquer dict com 'nome') -
     ex: o roster de uma turma. Conta quantos estão "primeira vez" nesse

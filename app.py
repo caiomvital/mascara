@@ -2952,10 +2952,14 @@ async function iniciar() {
       <div><b>Alunos:</b> ${rel.alunos}</div>
       <div><b>Professor:</b> ${rel.professor}</div>
       <div><b>Quantidade de aulas:</b> ${rel.quantidade_aulas}</div>
+      <div><b>Primeira vez nesta turma:</b> ${rel.funil.primeira_vez} de ${rel.funil.total}
+        (${(rel.funil.proporcao_primeira_vez * 100).toFixed(0)}%)
+        ${rel.funil.proporcao_primeira_vez < 0.3 ? ' <span style="color:var(--danger)">⚠ baixo — avalie se compensa abrir a próxima turma da sequência</span>' : ''}
+      </div>
       <table>
-        <thead><tr><th>Nome</th><th>Frequência</th><th>Sugestão</th></tr></thead>
+        <thead><tr><th>Nome</th><th>Categoria</th><th>Frequência</th><th>Sugestão</th></tr></thead>
         <tbody>
-          ${rel.tabela.map(l => `<tr><td>${l.nome}</td><td>${l.resumo}</td><td class="sugestao">${l.sugestao || '—'}</td></tr>`).join('')}
+          ${rel.tabela.map(l => `<tr><td>${l.nome}</td><td>${l.categoria}</td><td>${l.resumo}</td><td class="sugestao">${l.sugestao || '—'}</td></tr>`).join('')}
         </tbody>
       </table>
       <div style="margin-top:12px;"><b>Observações:</b> ${rel.observacoes}</div>
