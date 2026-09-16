@@ -105,6 +105,47 @@ def montar_dados_corpo(cadastro):
     return [{"rotulo": rotulo, "valor": cadastro.get(campo) or "—"} for campo, rotulo in _CAMPOS_CORPO]
 
 
+def montar_resumo_aluno_sugerido(comentarios):
+    """Ponto de partida DETERMINÍSTICO pro campo "Resumo do aluno" do
+    e-mail (pedido do usuário, 2026-09-16, com o exemplo real de e-mail
+    que o Diógenes usa - narrativa de contato, ex: "Em Janeiro de 2026,
+    entramos em contato... mas ele não veio"). NUNCA gera a narrativa por
+    IA (regra travada 2026-09-07: nada de IA livre em documento que pode
+    virar prova jurídica) - só repassa o texto do último "Ocorrência de
+    Contato" já registrado (ver reconciliacao_devedor.data_ultimo_contato,
+    mesmo título), que o funcionário sempre pode editar antes de mandar.
+    Sem nenhum contato registrado, devolve um placeholder pedindo pra
+    escrever."""
+    contatos = [c for c in comentarios if c["titulo"].strip().upper() == "OCORRÊNCIA DE CONTATO"]
+    if contatos:
+        ultimo = contatos[-1]
+        return f"Em {ultimo['data']}, {ultimo['texto']}"
+    return "[Descreva aqui o histórico de contato com o aluno]"
+
+
+def montar_deve_os_meses(boletos_cora):
+    """Lista "Deve os meses" do e-mail (pedido do usuário, 2026-09-16,
+    exemplo real: "R$ 350,00 com Vencimento em 26/12/25" por linha) -
+    SEMPRE vem da CORA (fonte real de boleto em aberto, com data de
+    vencimento de verdade) - o Fuctura não tem cronograma de parcelas
+    estruturado pra gerar isso sozinho (já confirmado antes, o Diógenes
+    rejeitou explicitamente inferir isso). Enquanto a CORA não estiver
+    configurada, devolve um placeholder pré-pronto - preenche sozinho
+    assim que a integração real existir, sem mudar o resto do template."""
+    if boletos_cora is None:
+        return "[boletos em aberto — preenche automaticamente quando a CORA estiver configurada]"
+    if boletos_cora.get("erro"):
+        return f"[boletos em aberto — erro consultando a CORA: {boletos_cora['erro']}]"
+    boletos = boletos_cora.get("boletos") or []
+    if not boletos:
+        return "Nenhum boleto em aberto na CORA."
+    linhas = []
+    for b in boletos:
+        valor_fmt = f"{b['valor']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        linhas.append(f"R$ {valor_fmt} com Vencimento em {b.get('vencimento') or '—'}")
+    return "\n".join(linhas)
+
+
 def montar_preview_email(client, id_aluno):
     """Junta tudo que o corpo/anexos do email vão precisar, sem enviar nem
     criar rascunho nenhum - pra revisão antes desse passo final."""
@@ -132,6 +173,10 @@ def montar_preview_email(client, id_aluno):
         "responsavel_contrato": responsavel_contrato,
         "destinatario_email_pendente": True,
         "resumo_pagamentos_desistencia": montar_resumo_pagamentos_desistencia(comentarios),
+        # campos do template real do Diógenes (2026-09-16) - ver
+        # montar_resumo_aluno_sugerido/montar_deve_os_meses.
+        "resumo_aluno_sugerido": montar_resumo_aluno_sugerido(comentarios),
+        "deve_os_meses": montar_deve_os_meses(boletos_cora),
         "boletos_cora": boletos_cora,
         "turmas": perfil.get("turmas_atuais", []),
         "anexos": [{"nome_arquivo": a["nome_arquivo"], "tamanho": len(a["conteudo"])} for a in resultado_anexos["anexos"]],

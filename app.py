@@ -3369,23 +3369,29 @@ async function verPreviaEmail(idAluno) {
       <div id="gmail-anexo-area-${idAluno}" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">Verificando conexão com o Gmail...</div>
       <div id="gmail-anexo-msg-${idAluno}" style="margin-top:6px;"></div>
 
-      <b style="display:block; margin-top:14px;">Dados do aluno</b>
+      <b style="display:block; margin-top:14px;">Dados do aluno (vão no corpo do e-mail assim)</b>
       <table style="margin-top:6px;">
         ${d.dados_pessoais.map(c => `<tr><th>${c.rotulo}</th><td>${c.valor}</td></tr>`).join('')}
       </table>
 
-      <b style="display:block; margin-top:14px;">
-        Responsável pelo contrato (quem assinou — informação pro advogado, NÃO é quem recebe este e-mail)
-        ${d.responsavel_contrato.papel === 'responsavel' ? ' — responsável' : ' — o próprio aluno (sem responsável cadastrado)'}
-      </b>
-      <table style="margin-top:6px;">
-        <tr><th>Nome</th><td>${d.responsavel_contrato.nome}</td></tr>
-        <tr><th>CPF</th><td>${d.responsavel_contrato.cpf}${d.responsavel_contrato.cpf_suspeito ? ' <span style="color:var(--danger)">⚠ não tem 11 dígitos — cadastro antigo, conferir/corrigir</span>' : ''}</td></tr>
-        <tr><th>Telefone</th><td>${d.responsavel_contrato.telefone}</td></tr>
-        <tr><th>Email</th><td>${d.responsavel_contrato.email}</td></tr>
-      </table>
+      ${d.responsavel_contrato.papel === 'responsavel' ? `
+        <b style="display:block; margin-top:14px;">Responsável pelo contrato (quem assinou — informação extra pro advogado)</b>
+        <table style="margin-top:6px;">
+          <tr><th>Nome</th><td>${d.responsavel_contrato.nome}</td></tr>
+          <tr><th>CPF</th><td>${d.responsavel_contrato.cpf}${d.responsavel_contrato.cpf_suspeito ? ' <span style="color:var(--danger)">⚠ não tem 11 dígitos — cadastro antigo, conferir/corrigir</span>' : ''}</td></tr>
+          <tr><th>Telefone</th><td>${d.responsavel_contrato.telefone}</td></tr>
+          <tr><th>Email</th><td>${d.responsavel_contrato.email}</td></tr>
+        </table>
+      ` : ''}
 
-      <b style="display:block; margin-top:14px;">Resumo — pagamentos e possíveis motivos de desistência</b>
+      <b style="display:block; margin-top:14px;">Resumo do aluno</b>
+      <div class="fonte" style="margin-bottom:4px;">Pré-preenchido com o último contato registrado — edite antes de gerar o e-mail.</div>
+      <textarea id="resumoAlunoEmail-${idAluno}" rows="3" style="width:100%; font-family:inherit;">${d.resumo_aluno_sugerido}</textarea>
+
+      <b style="display:block; margin-top:14px;">Deve os meses</b>
+      <div class="comentario" style="white-space:pre-wrap;">${d.deve_os_meses}</div>
+
+      <b style="display:block; margin-top:14px;">Resumo — pagamentos e possíveis motivos de desistência (histórico completo, de apoio)</b>
       <div class="comentario" style="white-space:pre-wrap;">${d.resumo_pagamentos_desistencia}</div>
 
       <b style="display:block; margin-top:14px;">Valores em aberto (CORA)</b>
@@ -3422,30 +3428,48 @@ async function renderizarAreaGmailAnexo(idAluno) {
 // Monta assunto/corpo do email jurídico a partir da prévia já carregada -
 // reaproveitado tanto por abrirNoGmail (link tipo wa.me, sem anexo) quanto
 // por criarRascunhoComAnexo (API de verdade, com anexo - ver mais abaixo).
-function montarConteudoEmailJuridico(d, comAnexoAutomatico) {
+// Formato alinhado com o modelo real que o Diógenes usa (exemplo trazido
+// pelo usuário, 2026-09-16): "Devedor: NOME", dados direto (sem separar
+// "responsável" quando não existe), "Resumo do aluno" (editável - nunca
+// gerado por IA, regra travada 2026-09-07) e "Deve os meses" (sempre da
+// CORA - fonte real de vencimento; placeholder pré-pronto até configurar).
+function montarConteudoEmailJuridico(idAluno, d, comAnexoAutomatico) {
   const nome = (d.dados_pessoais.find(c => c.rotulo === 'Nome') || {}).valor || '(nome não encontrado)';
   const assunto = `Encaminhamento para análise jurídica — ${nome}`;
+  const resumoAlunoTextarea = document.getElementById('resumoAlunoEmail-' + idAluno);
+  const resumoAluno = resumoAlunoTextarea ? resumoAlunoTextarea.value.trim() : d.resumo_aluno_sugerido;
 
   const linhas = [
     'RASCUNHO - revisar antes de enviar. Preencha o destinatário (advogado/escritório)' +
       (comAnexoAutomatico ? ' antes de enviar.' : ' e anexe o contrato/ata manualmente - este link não carrega anexo nem destinatário sozinho.'),
     '',
-    'Dados do aluno:',
-    ...d.dados_pessoais.map(c => `  ${c.rotulo}: ${c.valor}`),
+    `Devedor: ${nome}`,
     '',
-    `Responsável pelo contrato (${d.responsavel_contrato.papel === 'responsavel' ? 'responsável' : 'o próprio aluno, sem responsável cadastrado'}):`,
-    `  Nome: ${d.responsavel_contrato.nome}`,
-    `  CPF: ${d.responsavel_contrato.cpf}`,
-    `  Telefone: ${d.responsavel_contrato.telefone}`,
-    `  Email: ${d.responsavel_contrato.email}`,
-    '',
-    'Resumo — pagamentos e possíveis motivos de desistência:',
-    d.resumo_pagamentos_desistencia,
+    ...d.dados_pessoais.map(c => `${c.rotulo}: ${c.valor}`),
     '',
   ];
-  if (d.boletos_cora && !d.boletos_cora.erro) {
-    linhas.push('Valores em aberto (CORA):', `  ${d.boletos_cora.resumo_texto || ''}`, '');
+  if (d.responsavel_contrato.papel === 'responsavel') {
+    linhas.push(
+      'Responsável pelo contrato (quem assinou):',
+      `  Nome: ${d.responsavel_contrato.nome}`,
+      `  CPF: ${d.responsavel_contrato.cpf}`,
+      `  Telefone: ${d.responsavel_contrato.telefone}`,
+      `  Email: ${d.responsavel_contrato.email}`,
+      '',
+    );
   }
+  linhas.push(
+    'Resumo do aluno:',
+    resumoAluno,
+    '',
+    'Deve os meses:',
+    '',
+    d.deve_os_meses,
+    '',
+    'Resumo — pagamentos e possíveis motivos de desistência (histórico completo, de apoio):',
+    d.resumo_pagamentos_desistencia,
+    '',
+  );
   linhas.push('Turmas em que o aluno está registrado:');
   if (d.turmas.length) linhas.push(...d.turmas.map(t => `  ${t.data} — ${t.nome}`));
   else linhas.push('  Nenhuma turma no cadastro.');
@@ -3464,7 +3488,7 @@ function montarConteudoEmailJuridico(d, comAnexoAutomatico) {
 function abrirNoGmail(idAluno) {
   const d = ultimosPreviewsEmail[idAluno];
   if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
-  const { assunto, corpo } = montarConteudoEmailJuridico(d, false);
+  const { assunto, corpo } = montarConteudoEmailJuridico(idAluno, d, false);
   const url = `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(assunto)}&body=${encodeURIComponent(corpo)}`;
   window.open(url, '_blank');
 }
@@ -3488,7 +3512,7 @@ async function criarRascunhoComAnexo(idAluno) {
   if (!d) { alert('Monte a prévia do e-mail primeiro.'); return; }
   const msgDiv = document.getElementById('gmail-anexo-msg-' + idAluno);
   msgDiv.textContent = 'Criando rascunho (buscando anexos)...';
-  const { assunto, corpo } = montarConteudoEmailJuridico(d, true);
+  const { assunto, corpo } = montarConteudoEmailJuridico(idAluno, d, true);
   const r = await fetch(`/api/aluno/${idAluno}/rascunho-gmail`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ assunto, corpo }),

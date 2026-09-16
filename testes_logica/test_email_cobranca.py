@@ -95,6 +95,75 @@ def teste_preview_nao_expoe_mais_campo_destinatario_antigo():
     )
 
 
+# ---------------------------------------------------------------------------
+# montar_resumo_aluno_sugerido / montar_deve_os_meses - campos do template
+# real de e-mail que o Diógenes usa (exemplo trazido pelo usuário,
+# 2026-09-16). NUNCA gera narrativa por IA (regra travada 2026-09-07) -
+# só repassa dado já registrado, sempre editável antes de mandar.
+# ---------------------------------------------------------------------------
+def teste_resumo_aluno_sugerido_usa_ultimo_contato_registrado():
+    comentarios = [
+        # comentarios_aluno() do Fuctura vem em ordem ASC (mais antigo primeiro) - fixture segue a mesma ordem
+        {"data": "20/01/2026", "titulo": "Ocorrência de Contato", "texto": "entramos em contato e ele informou que iria recomeçar o curso, mas não veio."},
+        {"data": "05/09/2026", "titulo": "OCORRÊNCIA DE CONTATO", "texto": "Resultado: Não respondeu. Data: 05/09/2026."},
+    ]
+    r = email_cobranca.montar_resumo_aluno_sugerido(comentarios)
+    relatar(
+        "montar_resumo_aluno_sugerido usa o ÚLTIMO contato registrado (não o mais antigo), reconhece título maiúsculo/minúsculo",
+        r.startswith("Em 05/09/2026,") and "Não respondeu" in r,
+        f"resultado: {r!r}",
+    )
+
+
+def teste_resumo_aluno_sugerido_sem_contato_registrado():
+    r = email_cobranca.montar_resumo_aluno_sugerido([{"data": "01/01/2026", "titulo": "GERAR BOLETOS", "texto": "13x de 350"}])
+    relatar(
+        "montar_resumo_aluno_sugerido sem nenhum contato registrado devolve placeholder pra escrever",
+        r.startswith("["),
+        f"resultado: {r!r}",
+    )
+
+
+def teste_deve_os_meses_cora_nao_configurada():
+    r = email_cobranca.montar_deve_os_meses(None)
+    relatar(
+        "montar_deve_os_meses com CORA não configurada (None) devolve placeholder pré-pronto, não quebra",
+        r.startswith("[") and "CORA" in r,
+        f"resultado: {r!r}",
+    )
+
+
+def teste_deve_os_meses_formata_boletos_reais():
+    boletos_cora = {"boletos": [
+        {"valor": 350.0, "vencimento": "26/12/25"},
+        {"valor": 350.0, "vencimento": "05/02/26"},
+    ]}
+    r = email_cobranca.montar_deve_os_meses(boletos_cora)
+    relatar(
+        "montar_deve_os_meses formata cada boleto real no formato do template ('R$ X,XX com Vencimento em DD/MM/AA')",
+        r == "R$ 350,00 com Vencimento em 26/12/25\nR$ 350,00 com Vencimento em 05/02/26",
+        f"resultado: {r!r}",
+    )
+
+
+def teste_deve_os_meses_sem_boletos_em_aberto():
+    r = email_cobranca.montar_deve_os_meses({"boletos": []})
+    relatar(
+        "montar_deve_os_meses com CORA configurada mas 0 boletos em aberto diz isso claramente (não fica vazio/quebrado)",
+        "Nenhum boleto" in r,
+        f"resultado: {r!r}",
+    )
+
+
+def teste_deve_os_meses_erro_na_cora_nao_quebra():
+    r = email_cobranca.montar_deve_os_meses({"erro": "timeout"})
+    relatar(
+        "montar_deve_os_meses com erro na consulta CORA mostra o erro, não quebra o e-mail inteiro",
+        "[" in r and "timeout" in r,
+        f"resultado: {r!r}",
+    )
+
+
 def main():
     print("Rodando testes de email_cobranca.py (sem rede nenhuma)...\n")
     teste_usa_responsavel_quando_cadastrado()
@@ -102,6 +171,12 @@ def main():
     teste_cpf_suspeito_sinalizado()
     teste_cpf_vazio_nao_e_suspeito()
     teste_preview_nao_expoe_mais_campo_destinatario_antigo()
+    teste_resumo_aluno_sugerido_usa_ultimo_contato_registrado()
+    teste_resumo_aluno_sugerido_sem_contato_registrado()
+    teste_deve_os_meses_cora_nao_configurada()
+    teste_deve_os_meses_formata_boletos_reais()
+    teste_deve_os_meses_sem_boletos_em_aberto()
+    teste_deve_os_meses_erro_na_cora_nao_quebra()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")
