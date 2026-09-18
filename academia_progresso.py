@@ -40,6 +40,42 @@ SEQUENCIAS_ACADEMIA = {
 MODULOS_ENTRADA = ["J1", "PY1"]
 LIMIAR_MINIMO_TURMA_ENTRADA = 10
 
+# ACHADO (2026-09-18, relatado pelo usuário: "ele mostrou aí interessados,
+# tem que mostrar o que estão matriculados apenas contabilizando"): o
+# roster de uma turma de curso de verdade (roster_turma) traz qualquer
+# aluno cuja Situação ATUAL no Fuctura (campo 'status', ver
+# fuctura_client.STATUS_ALUNO) esteja ligada àquele id_turma - inclusive
+# quem nunca chegou a matricular de verdade (só "Interessado"/"Cliente sem
+# Interesse") ou já desistiu ("Cancelado"). Esses nunca devem contar nem
+# aparecer na lista de matriculados de uma turma de entrada.
+STATUS_NAO_MATRICULADO_DE_VERDADE = {"Interessado", "Cliente sem Interesse", "Cancelado"}
+
+
+def eh_status_matriculado_real(status):
+    """True se o status atual do aluno (campo 'status' do roster) indica
+    matrícula de verdade - qualquer coisa fora de
+    STATUS_NAO_MATRICULADO_DE_VERDADE conta (inclusive Devedor/Advogado:
+    já passaram pela matrícula de verdade, só estão numa situação
+    financeira/administrativa à parte agora). status vazio/None conta como
+    matriculado (sem dado pra afirmar o contrário)."""
+    return (status or "").strip() not in STATUS_NAO_MATRICULADO_DE_VERDADE
+
+
+def turma_ainda_aberta(data_termino_str, hoje=None):
+    """True se a turma ainda não terminou (dataTermino de obter_turma() é
+    hoje ou no futuro) - trata data ausente/ilegível como aberta (sem dado
+    suficiente pra afirmar que já fechou). Pedido do usuário (2026-09-18:
+    "não tem 30 turmas abertas, tem bem menos") - o corte anterior só
+    olhava a data EMBUTIDA NO NOME da turma (data de início), sem checar
+    se ela já tinha terminado."""
+    if not (data_termino_str or "").strip():
+        return True
+    try:
+        termino = datetime.strptime(data_termino_str.strip(), "%d/%m/%Y")
+    except ValueError:
+        return True
+    return termino.date() >= (hoje or datetime.now()).date()
+
 # Sigla do módulo no INÍCIO do nome da turma (ignora o prefixo "."/"-"
 # de abandono/refazendo, que fica no nome do ALUNO, não da turma) -
 # ex: "JA4 25/07/26 Sab M", "J1 08/07/25 TER N", "PY2 01/07/23 Sab T".
@@ -170,8 +206,14 @@ def analisar_turma_entrada(nome_turma, roster, limiar_minimo=LIMIAR_MINIMO_TURMA
     abandono/continuidade - mesma classificação de categoria_nome) e
     compara com o mínimo pra turma poder iniciar (pedido do usuário,
     2026-09-18: "só pode iniciar com no mínimo 10 matriculados pela
-    primeira vez"). roster: lista de {'nome', ...} (ex: roster_turma())."""
-    funil = indicador_funil_turma(roster)
+    primeira vez"). roster: lista de {'nome', 'status', ...} (ex:
+    roster_turma()) - filtra fora quem não matriculou de verdade
+    (Interessado/Cliente sem Interesse/Cancelado, ver
+    eh_status_matriculado_real) antes de contar, pedido do usuário
+    (2026-09-18: "ele mostrou aí interessados, tem que mostrar o que
+    estão matriculados apenas contabilizando")."""
+    matriculados = [a for a in roster if eh_status_matriculado_real(a.get("status"))]
+    funil = indicador_funil_turma(matriculados)
     return {
         "nome_turma": nome_turma,
         "modulo": identificar_modulo(nome_turma),

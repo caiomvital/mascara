@@ -12,7 +12,7 @@ Como rodar:
 """
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -238,6 +238,88 @@ def teste_analisar_turma_entrada_limiar_customizado():
     )
 
 
+def teste_eh_status_matriculado_real():
+    relatar(
+        "eh_status_matriculado_real: 'Interessado' não conta como matriculado de verdade",
+        ap.eh_status_matriculado_real("Interessado") is False,
+        "",
+    )
+    relatar(
+        "eh_status_matriculado_real: 'Cliente sem Interesse' não conta como matriculado de verdade",
+        ap.eh_status_matriculado_real("Cliente sem Interesse") is False,
+        "",
+    )
+    relatar(
+        "eh_status_matriculado_real: 'Cancelado' não conta como matriculado de verdade",
+        ap.eh_status_matriculado_real("Cancelado") is False,
+        "",
+    )
+    relatar(
+        "eh_status_matriculado_real: 'Devedor' continua contando (já matriculou de verdade)",
+        ap.eh_status_matriculado_real("Devedor") is True,
+        "",
+    )
+    relatar(
+        "eh_status_matriculado_real: '-Matriculado' conta",
+        ap.eh_status_matriculado_real("-Matriculado") is True,
+        "",
+    )
+    relatar(
+        "eh_status_matriculado_real: status vazio/None conta (sem dado pra afirmar o contrário)",
+        ap.eh_status_matriculado_real(None) is True and ap.eh_status_matriculado_real("") is True,
+        "",
+    )
+
+
+def teste_analisar_turma_entrada_filtra_interessado_e_cancelado():
+    roster = [
+        {"nome": "ANA", "status": "-Matriculado"},
+        {"nome": "BRUNO", "status": "Interessado"},
+        {"nome": "CARLA", "status": "Cancelado"},
+        {"nome": "DAVI", "status": "Devedor"},
+    ]
+    r = ap.analisar_turma_entrada("J1 08/07/25 TER N", roster)
+    relatar(
+        "analisar_turma_entrada: Interessado/Cancelado não contam no total (só ANA e DAVI)",
+        r["total_matriculados"] == 2 and r["primeira_vez"] == 2,
+        f"resultado: {r}",
+    )
+
+
+def teste_turma_ainda_aberta_data_futura():
+    amanha = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
+    relatar(
+        "turma_ainda_aberta: dataTermino no futuro -> aberta",
+        ap.turma_ainda_aberta(amanha) is True,
+        "",
+    )
+
+
+def teste_turma_ainda_aberta_data_passada():
+    ontem = (datetime.now() - timedelta(days=1)).strftime("%d/%m/%Y")
+    relatar(
+        "turma_ainda_aberta: dataTermino no passado -> já fechou",
+        ap.turma_ainda_aberta(ontem) is False,
+        "",
+    )
+
+
+def teste_turma_ainda_aberta_sem_data():
+    relatar(
+        "turma_ainda_aberta: sem dataTermino cadastrada -> trata como aberta (sem dado pra afirmar o contrário)",
+        ap.turma_ainda_aberta("") is True and ap.turma_ainda_aberta(None) is True,
+        "",
+    )
+
+
+def teste_turma_ainda_aberta_data_ilegivel_nao_quebra():
+    relatar(
+        "turma_ainda_aberta: data em formato inesperado não quebra - trata como aberta",
+        ap.turma_ainda_aberta("data inválida") is True,
+        "",
+    )
+
+
 def main():
     print("Rodando testes de academia_progresso.py (sem rede)...\n")
     teste_identificar_modulo()
@@ -257,6 +339,12 @@ def main():
     teste_analisar_turma_entrada_atinge_minimo()
     teste_analisar_turma_entrada_abaixo_do_minimo()
     teste_analisar_turma_entrada_limiar_customizado()
+    teste_eh_status_matriculado_real()
+    teste_analisar_turma_entrada_filtra_interessado_e_cancelado()
+    teste_turma_ainda_aberta_data_futura()
+    teste_turma_ainda_aberta_data_passada()
+    teste_turma_ainda_aberta_sem_data()
+    teste_turma_ainda_aberta_data_ilegivel_nao_quebra()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

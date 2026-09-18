@@ -960,7 +960,22 @@ def _montar_turmas_entrada(client):
     com isso, o corte pros N mais recentes tambem era feito no total
     combinado (J1+PY1), entao se um modulo nao trouxesse nada (como no bug
     acima) o outro sozinho preenchia as 15 vagas - agora o corte e por
-    modulo, garantindo turmas recentes de cada um."""
+    modulo, garantindo turmas recentes de cada um.
+
+    ACHADO 2 (2026-09-18, segunda rodada, relatado pelo usuario: "ele
+    mostrou ai interessados, tem que mostrar o que estao matriculados
+    apenas contabilizando" e "nao tem 30 turmas abertas, tem bem menos"):
+      - o roster de uma turma (roster_turma) traz qualquer aluno cuja
+        Situacao ATUAL no Fuctura esteja ligada aquele id_turma -
+        inclusive quem so demonstrou interesse ("Interessado"/"Cliente sem
+        Interesse") ou ja desistiu ("Cancelado"), nunca matriculando de
+        verdade. Corrigido: conta e lista so quem tem status de
+        matricula real (academia_progresso.eh_status_matriculado_real).
+      - o corte pras N mais recentes so olhava a data EMBUTIDA NO NOME da
+        turma (data de INICIO) - nao checava se ela ja tinha TERMINADO.
+        Corrigido: so entra na lista quem ainda nao terminou, pela
+        dataTermino de verdade (obter_turma), nao pelo nome
+        (academia_progresso.turma_ainda_aberta)."""
     candidatas = []
     for modulo in academia_progresso.MODULOS_ENTRADA:
         encontradas = client.buscar_turma_por_nome("." + modulo)
@@ -972,6 +987,10 @@ def _montar_turmas_entrada(client):
 
     turmas = []
     for t in candidatas:
+        detalhe_turma = client.obter_turma(t["id_turma"])
+        data_termino = detalhe_turma.get("dataTermino") if detalhe_turma else None
+        if not academia_progresso.turma_ainda_aberta(data_termino):
+            continue
         roster = client.roster_turma(t["id_turma"])
         analise = academia_progresso.analisar_turma_entrada(t["nome"], roster)
         turmas.append({
@@ -979,10 +998,12 @@ def _montar_turmas_entrada(client):
             "data": analise["data"].strftime("%d/%m/%Y") if analise["data"] else None,
             # Pedido do usuario (2026-09-18): "importante poder conferir" -
             # lista os alunos (nao so a contagem) pra dar pra checar quem
-            # entrou em cada categoria antes de confiar no numero.
+            # entrou em cada categoria antes de confiar no numero. So quem
+            # matriculou de verdade (mesmo filtro do total/primeira_vez).
             "alunos": [
                 {"nome": a["nome"], "categoria": academia_progresso.categoria_nome(a["nome"])}
                 for a in roster
+                if academia_progresso.eh_status_matriculado_real(a.get("status"))
             ],
         })
     return {"turmas": turmas, "limiar_minimo": academia_progresso.LIMIAR_MINIMO_TURMA_ENTRADA}
