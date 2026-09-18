@@ -934,7 +934,7 @@ def _montar_atividade_recente(client, limite_urgentes=20, limite_matriculas=20,
     return {"urgentes": urgentes, "matriculas_hoje": matriculas, "data": hoje}
 
 
-LIMITE_TURMAS_ENTRADA = 15  # so as N mais recentes de cada modulo, pra nao carregar historico inteiro
+LIMITE_TURMAS_ENTRADA = 15  # as N mais recentes de CADA modulo, pra nao carregar historico inteiro
 
 
 def _montar_turmas_entrada(client):
@@ -946,16 +946,29 @@ def _montar_turmas_entrada(client):
     academia_progresso.extrair_data_turma) e conta quantos matriculados
     em cada uma sao de primeira vez (so pela marca do nome - rapido, sem
     consultar o Fuctura aluno por aluno, mesmo metodo do funil no
-    Fechamento de Turma)."""
+    Fechamento de Turma).
+
+    ACHADO (2026-09-18, relatado pelo usuario: "so apareceram turmas de
+    python"): o autocomplete de turma do Fuctura (ctrl_autocomplete_turma.php)
+    exige um termo de busca com pelo menos 3 caracteres - buscar "J1"/"J2"
+    (2 caracteres) sempre devolvia 0 resultados, enquanto "PY1"/"JA4"/"JS3"
+    (3+) funcionavam normal. Toda turma de curso de verdade comeca com "."
+    no nome (ex: ".J1 08/07/25 TER N") - buscar "." + modulo em vez do
+    modulo cru contorna o minimo de 3 caracteres pra QUALQUER modulo (com
+    ou sem esse limite) sem mudar os resultados de quem ja tinha 3+
+    (confirmado: ".PY1" devolve os mesmos 64 resultados que "PY1"). Junto
+    com isso, o corte pros N mais recentes tambem era feito no total
+    combinado (J1+PY1), entao se um modulo nao trouxesse nada (como no bug
+    acima) o outro sozinho preenchia as 15 vagas - agora o corte e por
+    modulo, garantindo turmas recentes de cada um."""
     candidatas = []
     for modulo in academia_progresso.MODULOS_ENTRADA:
-        encontradas = client.buscar_turma_por_nome(modulo)
-        for t in encontradas:
-            if academia_progresso.identificar_modulo(t["nome"]) == modulo:
-                candidatas.append(t)
+        encontradas = client.buscar_turma_por_nome("." + modulo)
+        do_modulo = [t for t in encontradas if academia_progresso.identificar_modulo(t["nome"]) == modulo]
+        do_modulo.sort(key=lambda t: academia_progresso.extrair_data_turma(t["nome"]) or datetime.min, reverse=True)
+        candidatas.extend(do_modulo[:LIMITE_TURMAS_ENTRADA])
 
     candidatas.sort(key=lambda t: academia_progresso.extrair_data_turma(t["nome"]) or datetime.min, reverse=True)
-    candidatas = candidatas[:LIMITE_TURMAS_ENTRADA]
 
     turmas = []
     for t in candidatas:
@@ -964,6 +977,13 @@ def _montar_turmas_entrada(client):
         turmas.append({
             **analise, "id_turma": t["id_turma"],
             "data": analise["data"].strftime("%d/%m/%Y") if analise["data"] else None,
+            # Pedido do usuario (2026-09-18): "importante poder conferir" -
+            # lista os alunos (nao so a contagem) pra dar pra checar quem
+            # entrou em cada categoria antes de confiar no numero.
+            "alunos": [
+                {"nome": a["nome"], "categoria": academia_progresso.categoria_nome(a["nome"])}
+                for a in roster
+            ],
         })
     return {"turmas": turmas, "limiar_minimo": academia_progresso.LIMIAR_MINIMO_TURMA_ENTRADA}
 
@@ -5071,6 +5091,12 @@ TURMAS_ENTRADA_HTML = "<!doctype html><html lang=\"pt-br\"><head><meta charset=\
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
   .linha-ok { background:var(--success-bg); }
   .linha-baixo { background:var(--danger-bg); }
+  tr.linha-turma { cursor:pointer; }
+  .lista-alunos { list-style:none; margin:0; padding:0; columns:2; }
+  .lista-alunos li { padding:2px 0; }
+  .tag-categoria { font-size:0.75rem; padding:1px 6px; border-radius:10px; margin-left:6px; }
+  .tag-categoria.primeira-vez { background:var(--success-bg); color:var(--success); }
+  .tag-categoria.refazendo, .tag-categoria.abandono { background:var(--danger-bg); color:var(--danger); }
 </style></head><body>
 <div class="page">
 <a class="voltar" href="/">← voltar</a>
@@ -5079,11 +5105,20 @@ TURMAS_ENTRADA_HTML = "<!doctype html><html lang=\"pt-br\"><head><meta charset=\
   J1 e PY1 são a porta de entrada dos clientes novos na academia — só compensa iniciar a turma com pelo menos
   <b id="limiarTexto">10</b> matriculados de <b>primeira vez de verdade</b> (nem refazendo, nem ex-aluno, nem continuidade).
   Mostra as turmas mais recentes de cada módulo, contando só pela marca do nome (rápido, sem consultar o Fuctura aluno por aluno).
+  Clique numa linha pra conferir a lista de alunos.
 </p>
 <button class="btn-sim" onclick="carregar()">Carregar turmas recentes</button>
 <div id="resultado" style="margin-top:14px;"></div>
 </div>
 <script>""" + BASE_JS + """
+let turmasCarregadas = [];
+
+function toggleAlunos(idTurma) {
+  const linha = document.getElementById(`detalhe-${idTurma}`);
+  if (!linha) return;
+  linha.hidden = !linha.hidden;
+}
+
 async function carregar() {
   const div = document.getElementById('resultado');
   div.innerHTML = '<div class="card">Buscando turmas J1/PY1 recentes...</div>';
@@ -5091,6 +5126,7 @@ async function carregar() {
   const d = await r.json();
   if (d.erro) { div.innerHTML = `<div class="card">Erro: ${d.erro}</div>`; return; }
   document.getElementById('limiarTexto').textContent = d.limiar_minimo;
+  turmasCarregadas = d.turmas;
   if (!d.turmas.length) {
     div.innerHTML = '<div class="card">Nenhuma turma J1/PY1 encontrada.</div>';
     return;
@@ -5101,13 +5137,20 @@ async function carregar() {
         <thead><tr><th>Turma</th><th>Módulo</th><th>Data</th><th>Matriculados</th><th>Primeira vez</th><th>Situação</th></tr></thead>
         <tbody>
           ${d.turmas.map(t => `
-            <tr class="${t.atinge_minimo ? 'linha-ok' : 'linha-baixo'}">
+            <tr class="linha-turma ${t.atinge_minimo ? 'linha-ok' : 'linha-baixo'}" onclick="toggleAlunos('${t.id_turma}')">
               <td>${t.nome_turma}</td>
               <td>${t.modulo}</td>
               <td>${t.data || '—'}</td>
               <td>${t.total_matriculados}</td>
               <td><b>${t.primeira_vez}</b> / ${t.limiar_minimo}</td>
               <td>${t.atinge_minimo ? '✓ Atinge o mínimo' : '⚠ Abaixo do mínimo'}</td>
+            </tr>
+            <tr id="detalhe-${t.id_turma}" hidden>
+              <td colspan="6">
+                ${t.alunos.length ? `<ul class="lista-alunos">${t.alunos.map(a => `
+                  <li>${a.nome} <span class="tag-categoria ${a.categoria === 'Primeira vez' ? 'primeira-vez' : a.categoria.toLowerCase()}">${a.categoria}</span></li>
+                `).join('')}</ul>` : '<span class="fonte">Nenhum aluno matriculado ainda.</span>'}
+              </td>
             </tr>
           `).join('')}
         </tbody>
