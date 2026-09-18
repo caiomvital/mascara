@@ -24,6 +24,7 @@ vez" é sinal pra avaliar se vale abrir a próxima turma da sequência
 justifica sozinho abrir uma turma de JS3/JA4).
 """
 import re
+from datetime import datetime
 
 import fechamento_logic as logic
 
@@ -31,6 +32,13 @@ SEQUENCIAS_ACADEMIA = {
     "java": ["J1", "J2", "JS3", "JA4"],
     "python": ["PY1", "PY2", "PY3", "PY4"],
 }
+
+# Pedido do usuário (2026-09-18): J1 e PY1 são os módulos de ENTRADA da
+# academia (porta de entrada dos clientes novos pra Fuctura) - só podem
+# iniciar com no mínimo 10 matriculados de PRIMEIRA VEZ (nem refazendo,
+# nem ex-aluno, nem continuidade). Ver analisar_turma_entrada.
+MODULOS_ENTRADA = ["J1", "PY1"]
+LIMIAR_MINIMO_TURMA_ENTRADA = 10
 
 # Sigla do módulo no INÍCIO do nome da turma (ignora o prefixo "."/"-"
 # de abandono/refazendo, que fica no nome do ALUNO, não da turma) -
@@ -133,6 +141,46 @@ def categoria_nome(nome):
     if logic.eh_nome_marcado_abandono(nome):
         return "Abandono"
     return "Primeira vez"
+
+
+_RE_DATA_NO_NOME = re.compile(r"(\d{2})/(\d{2})/(\d{2,4})")
+
+
+def extrair_data_turma(nome_turma):
+    """Acha a primeira data (DD/MM/AA ou DD/MM/AAAA) dentro do nome da
+    turma - ex: "J1 08/07/25 TER N" -> 08/07/2025. Usado só pra ORDENAR
+    por "mais recente primeiro" (ver analisar_turmas_entrada) - nunca
+    pra decisão de negócio. None se não achar nenhuma data reconhecível
+    no nome."""
+    m = _RE_DATA_NO_NOME.search(nome_turma or "")
+    if not m:
+        return None
+    dia, mes, ano = m.groups()
+    if len(ano) == 2:
+        ano = "20" + ano
+    try:
+        return datetime(int(ano), int(mes), int(dia))
+    except ValueError:
+        return None
+
+
+def analisar_turma_entrada(nome_turma, roster, limiar_minimo=LIMIAR_MINIMO_TURMA_ENTRADA):
+    """Pra turmas de ENTRADA (J1/PY1 - ver MODULOS_ENTRADA): conta quantos
+    matriculados são de PRIMEIRA VEZ de verdade (nem refazendo, nem
+    abandono/continuidade - mesma classificação de categoria_nome) e
+    compara com o mínimo pra turma poder iniciar (pedido do usuário,
+    2026-09-18: "só pode iniciar com no mínimo 10 matriculados pela
+    primeira vez"). roster: lista de {'nome', ...} (ex: roster_turma())."""
+    funil = indicador_funil_turma(roster)
+    return {
+        "nome_turma": nome_turma,
+        "modulo": identificar_modulo(nome_turma),
+        "data": extrair_data_turma(nome_turma),
+        "total_matriculados": funil["total"],
+        "primeira_vez": funil["primeira_vez"],
+        "limiar_minimo": limiar_minimo,
+        "atinge_minimo": funil["primeira_vez"] >= limiar_minimo,
+    }
 
 
 def indicador_funil_turma(alunos_da_turma):

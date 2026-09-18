@@ -12,6 +12,7 @@ Como rodar:
 """
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -181,6 +182,62 @@ def teste_indicador_funil_turma_vazia_nao_quebra():
     )
 
 
+# ---------------------------------------------------------------------------
+# Pedido do usuário (2026-09-18): J1/PY1 são os módulos de ENTRADA da
+# academia - só podem iniciar com no mínimo 10 matriculados de primeira
+# vez de verdade (nem refazendo, nem abandono/continuidade).
+# ---------------------------------------------------------------------------
+def teste_extrair_data_turma():
+    relatar(
+        "extrair_data_turma: 'J1 08/07/25 TER N' -> 08/07/2025 (ano com 2 dígitos)",
+        ap.extrair_data_turma("J1 08/07/25 TER N") == datetime(2025, 7, 8),
+        "",
+    )
+    relatar(
+        "extrair_data_turma: 'PY1 02/09/2025 TER N' -> 02/09/2025 (ano com 4 dígitos)",
+        ap.extrair_data_turma("PY1 02/09/2025 TER N") == datetime(2025, 9, 2),
+        "",
+    )
+    relatar(
+        "extrair_data_turma: nome sem nenhuma data reconhecível -> None, não quebra",
+        ap.extrair_data_turma("Devedor/Pendência") is None,
+        "",
+    )
+
+
+def teste_analisar_turma_entrada_atinge_minimo():
+    roster = [{"nome": f"ALUNO{i}"} for i in range(12)]  # 12 sem marca = 12 primeira vez
+    r = ap.analisar_turma_entrada("J1 08/07/25 TER N", roster)
+    relatar(
+        "analisar_turma_entrada: com 12 de primeira vez (>= 10), atinge o mínimo",
+        r["primeira_vez"] == 12 and r["atinge_minimo"] is True and r["modulo"] == "J1",
+        f"resultado: {r}",
+    )
+
+
+def teste_analisar_turma_entrada_abaixo_do_minimo():
+    roster = (
+        [{"nome": f"-REFAZENDO{i}"} for i in range(5)]
+        + [{"nome": f"ALUNO{i}"} for i in range(3)]  # só 3 de primeira vez
+    )
+    r = ap.analisar_turma_entrada("PY1 02/09/25 TER N", roster)
+    relatar(
+        "analisar_turma_entrada: com só 3 de primeira vez (< 10), NÃO atinge o mínimo - mesmo com 8 matriculados no total",
+        r["primeira_vez"] == 3 and r["total_matriculados"] == 8 and r["atinge_minimo"] is False,
+        f"resultado: {r}",
+    )
+
+
+def teste_analisar_turma_entrada_limiar_customizado():
+    roster = [{"nome": f"ALUNO{i}"} for i in range(5)]
+    r = ap.analisar_turma_entrada("J1 08/07/25 TER N", roster, limiar_minimo=5)
+    relatar(
+        "analisar_turma_entrada: limiar customizado é respeitado (5 de primeira vez, limiar 5, atinge)",
+        r["atinge_minimo"] is True,
+        f"resultado: {r}",
+    )
+
+
 def main():
     print("Rodando testes de academia_progresso.py (sem rede)...\n")
     teste_identificar_modulo()
@@ -196,6 +253,10 @@ def main():
     teste_ex_aluno_de_verdade_trilha_nao_reconhecida_nunca_afirma()
     teste_indicador_funil_turma()
     teste_indicador_funil_turma_vazia_nao_quebra()
+    teste_extrair_data_turma()
+    teste_analisar_turma_entrada_atinge_minimo()
+    teste_analisar_turma_entrada_abaixo_do_minimo()
+    teste_analisar_turma_entrada_limiar_customizado()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

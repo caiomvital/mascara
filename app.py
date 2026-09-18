@@ -750,6 +750,11 @@ __AVISOS__
   <div class="proc-title">Calculadora de Multa</div>
   <div class="proc-desc">Multa de cancelamento — 10% ou 20% dos módulos não cursados, conforme o contrato.</div>
 </a>
+<a class="proc-card" href="/turmas-entrada">
+  <div class="proc-icon">🚪</div>
+  <div class="proc-title">Turmas de Entrada</div>
+  <div class="proc-desc">J1/PY1 recentes — quantos matriculados são de primeira vez de verdade (mínimo de 10 pra abrir a turma).</div>
+</a>
 </div>
 
 <h1 style="margin-top:36px;">Atividade recente</h1>
@@ -927,6 +932,40 @@ def _montar_atividade_recente(client, limite_urgentes=20, limite_matriculas=20,
     ]
 
     return {"urgentes": urgentes, "matriculas_hoje": matriculas, "data": hoje}
+
+
+LIMITE_TURMAS_ENTRADA = 15  # so as N mais recentes de cada modulo, pra nao carregar historico inteiro
+
+
+def _montar_turmas_entrada(client):
+    """So leitura - pra tela inicial. Pedido do usuario (2026-09-18): J1 e
+    PY1 sao os modulos de ENTRADA da academia (porta de entrada dos
+    clientes novos) - so podem iniciar com no minimo 10 matriculados de
+    PRIMEIRA VEZ de verdade (nem refazendo, nem ex-aluno/continuidade).
+    Busca as turmas J1/PY1 mais recentes (pela data no proprio nome, ver
+    academia_progresso.extrair_data_turma) e conta quantos matriculados
+    em cada uma sao de primeira vez (so pela marca do nome - rapido, sem
+    consultar o Fuctura aluno por aluno, mesmo metodo do funil no
+    Fechamento de Turma)."""
+    candidatas = []
+    for modulo in academia_progresso.MODULOS_ENTRADA:
+        encontradas = client.buscar_turma_por_nome(modulo)
+        for t in encontradas:
+            if academia_progresso.identificar_modulo(t["nome"]) == modulo:
+                candidatas.append(t)
+
+    candidatas.sort(key=lambda t: academia_progresso.extrair_data_turma(t["nome"]) or datetime.min, reverse=True)
+    candidatas = candidatas[:LIMITE_TURMAS_ENTRADA]
+
+    turmas = []
+    for t in candidatas:
+        roster = client.roster_turma(t["id_turma"])
+        analise = academia_progresso.analisar_turma_entrada(t["nome"], roster)
+        turmas.append({
+            **analise, "id_turma": t["id_turma"],
+            "data": analise["data"].strftime("%d/%m/%Y") if analise["data"] else None,
+        })
+    return {"turmas": turmas, "limiar_minimo": academia_progresso.LIMIAR_MINIMO_TURMA_ENTRADA}
 
 
 def _financeiro_resumido(perfil):
@@ -1203,6 +1242,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/calculadora-multa":
             self._send_html(CALCULADORA_MULTA_HTML)
+            return
+
+        if parsed.path == "/turmas-entrada":
+            self._send_html(TURMAS_ENTRADA_HTML)
+            return
+
+        if parsed.path == "/api/turmas-entrada":
+            try:
+                self._send_json(_montar_turmas_entrada(sessao["client"]))
+            except Exception as e:
+                self._send_json({"erro": str(e)}, 500)
             return
 
         if parsed.path == "/api/interessados/triagem":
@@ -5013,6 +5063,64 @@ function calcular(percentual) {
   div.style.display = 'block';
   div.innerHTML = `Multa de <b>${(percentual * 100).toFixed(0)}%</b> sobre ${fmt(valor)}: <b>${fmt(multa)}</b>`;
 }
+</script></body></html>"""
+
+
+TURMAS_ENTRADA_HTML = "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">\n<title>Turmas de Entrada</title>\n<style>" + BASE_CSS + """
+  table { width:100%; border-collapse:collapse; margin-top:6px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  .linha-ok { background:var(--success-bg); }
+  .linha-baixo { background:var(--danger-bg); }
+</style></head><body>
+<div class="page">
+<a class="voltar" href="/">← voltar</a>
+<h1>Turmas de Entrada (J1 / PY1)</h1>
+<p class="subtitulo">
+  J1 e PY1 são a porta de entrada dos clientes novos na academia — só compensa iniciar a turma com pelo menos
+  <b id="limiarTexto">10</b> matriculados de <b>primeira vez de verdade</b> (nem refazendo, nem ex-aluno, nem continuidade).
+  Mostra as turmas mais recentes de cada módulo, contando só pela marca do nome (rápido, sem consultar o Fuctura aluno por aluno).
+</p>
+<button class="btn-sim" onclick="carregar()">Carregar turmas recentes</button>
+<div id="resultado" style="margin-top:14px;"></div>
+</div>
+<script>""" + BASE_JS + """
+async function carregar() {
+  const div = document.getElementById('resultado');
+  div.innerHTML = '<div class="card">Buscando turmas J1/PY1 recentes...</div>';
+  const r = await fetch('/api/turmas-entrada');
+  const d = await r.json();
+  if (d.erro) { div.innerHTML = `<div class="card">Erro: ${d.erro}</div>`; return; }
+  document.getElementById('limiarTexto').textContent = d.limiar_minimo;
+  if (!d.turmas.length) {
+    div.innerHTML = '<div class="card">Nenhuma turma J1/PY1 encontrada.</div>';
+    return;
+  }
+  div.innerHTML = `
+    <div class="card">
+      <table>
+        <thead><tr><th>Turma</th><th>Módulo</th><th>Data</th><th>Matriculados</th><th>Primeira vez</th><th>Situação</th></tr></thead>
+        <tbody>
+          ${d.turmas.map(t => `
+            <tr class="${t.atinge_minimo ? 'linha-ok' : 'linha-baixo'}">
+              <td>${t.nome_turma}</td>
+              <td>${t.modulo}</td>
+              <td>${t.data || '—'}</td>
+              <td>${t.total_matriculados}</td>
+              <td><b>${t.primeira_vez}</b> / ${t.limiar_minimo}</td>
+              <td>${t.atinge_minimo ? '✓ Atinge o mínimo' : '⚠ Abaixo do mínimo'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div class="fonte" style="margin-top:8px;">
+        "Primeira vez" conta só pela marca do nome (mesmo método usado no Fechamento de Turma) — turmas recém-criadas,
+        com poucas matrículas ainda, podem estar abaixo do mínimo só porque ainda estão enchendo, não necessariamente
+        um problema.
+      </div>
+    </div>
+  `;
+}
+carregar();
 </script></body></html>"""
 
 
