@@ -990,7 +990,30 @@ def _montar_turmas_entrada(client):
     mas recebido=75) - ver academia_progresso.eh_matricula_financeira_real.
     Isso exige 1 chamada extra (perfil_aluno) por candidato que passar no
     filtro de status - aceitavel dado que agora sao poucas turmas abertas
-    (ver ACHADO 2) com poucos candidatos cada."""
+    (ver ACHADO 2) com poucos candidatos cada.
+
+    ACHADO 4 (2026-09-18, mesmo dia, revisao comentario a comentario
+    pedida pelo usuario apos ver "17 no mesmo bolo" - conferi TODOS os 17,
+    nao so uma amostra): dois problemas concretos que os filtros
+    anteriores nao pegavam:
+      - EDSON VINICIUS SOUZA DOS SANTOS aparecia como "primeira vez" mas e
+        MONITOR (ex-aluno ajudando o professor) - o proprio campo
+        'observacao' do roster ja mostra isso ("AG J2 A4 CONT MONITO",
+        truncado) - nao precisa de chamada extra nenhuma. Corrigido:
+        academia_progresso.eh_observacao_monitor exclui monitor da
+        contagem, mesmo padrao dos outros filtros de "nao e matricula de
+        verdade pra este proposito".
+      - JADSON AUGUSTO PEREIRA DA ROSA so passava no filtro financeiro
+        (recebido=75) por causa de 2 comentarios de TESTE gravados por
+        engano nesse aluno real (sobra de um teste anterior da tela
+        Registrar Pagamento) - o historico real dele mostra que nem
+        assinou contrato ainda. Por decisao do usuario, NAO mexe no
+        historico real do Fuctura (evita gravacao em lote/edicao
+        arriscada) - so quando Contratado=0 (a zona cinzenta que already
+        exige essa checagem extra), busca o historico de comentarios e
+        recalcula o recebido de verdade ignorando comentarios de teste
+        (academia_progresso.recebido_real) em vez de confiar cego no
+        agregado de perfil_aluno."""
     candidatas = []
     for modulo in academia_progresso.MODULOS_ENTRADA:
         encontradas = client.buscar_turma_por_nome("." + modulo)
@@ -1011,8 +1034,16 @@ def _montar_turmas_entrada(client):
         for a in roster:
             if not academia_progresso.eh_status_matriculado_real(a.get("status")):
                 continue
+            if academia_progresso.eh_observacao_monitor(a.get("observacao")):
+                continue
             perfil = client.perfil_aluno(a["id_aluno"])
-            if not academia_progresso.eh_matricula_financeira_real(perfil.get("contratado"), perfil.get("recebido")):
+            contratado = perfil.get("contratado")
+            recebido = perfil.get("recebido")
+            if not contratado:
+                # zona cinzenta (sem contrato formal) - nao confia cego no
+                # agregado de perfil_aluno, recalcula ignorando testes.
+                recebido = academia_progresso.recebido_real(client.comentarios_aluno(a["id_aluno"]))
+            if not academia_progresso.eh_matricula_financeira_real(contratado, recebido):
                 continue
             matriculados_de_verdade.append(a)
         analise = academia_progresso.analisar_turma_entrada(t["nome"], matriculados_de_verdade)

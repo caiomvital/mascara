@@ -354,6 +354,84 @@ def teste_eh_matricula_financeira_real():
     )
 
 
+def teste_eh_comentario_pagamento_teste():
+    """Caso real (2026-09-18, revisão comentário a comentário pedida pelo
+    usuário): JADSON tinha 2 comentários "-Pagamento Realizado" com
+    "teste" no título/texto - sobra de um teste anterior da tela
+    Registrar Pagamento gravada por engano nesse aluno real."""
+    relatar(
+        'eh_comentario_pagamento_teste: título com "TESTE" é reconhecido (caso real do JADSON)',
+        ap.eh_comentario_pagamento_teste("TESTE - Pagamento Realizado (convenção)", "Valor: R$ 50,00") is True,
+        "",
+    )
+    relatar(
+        'eh_comentario_pagamento_teste: texto com "teste" também é reconhecido (case-insensitive)',
+        ap.eh_comentario_pagamento_teste("Pagamento Realizado", "Parcela: 2/1 (TESTE via endpoint HTTP). Valor: R$ 25,00.") is True,
+        "",
+    )
+    relatar(
+        "eh_comentario_pagamento_teste: pagamento real (sem menção a teste) não é marcado",
+        ap.eh_comentario_pagamento_teste("PAGAMENTO PIX", "Valor: R$ 377,00") is False,
+        "",
+    )
+
+
+def teste_recebido_real_ignora_comentarios_de_teste():
+    """Regressão direta do achado real: sem filtrar os 2 comentários de
+    teste, JADSON somaria R$75 (50+25) como se tivesse pago de verdade -
+    recebido_real deve ignorá-los e não somar nada."""
+    comentarios_jadson = [
+        {"tipo": "-Pagamento Realizado", "titulo": "TESTE - Pagamento Realizado (convenção)",
+         "texto": "Teste de convenção: Forma: Boleto. Parcela: 1/1 (TESTE). Valor: R$ 50,00. Data: 15/09/2026."},
+        {"tipo": "-Pagamento Realizado", "titulo": "Pagamento Realizado",
+         "texto": "Forma: Boleto Bancário. Parcela: 2/1 (TESTE via endpoint HTTP). Valor: R$ 25,00. Observação: teste do endpoint real"},
+        {"tipo": "-Matricula", "titulo": "INTERESSADO", "texto": "42 anos, hoje é técnico de manutenção."},
+    ]
+    relatar(
+        "recebido_real: ignora os 2 comentários de teste do JADSON - soma 0, não 75",
+        ap.recebido_real(comentarios_jadson) == 0.0,
+        f"resultado: {ap.recebido_real(comentarios_jadson)}",
+    )
+
+
+def teste_recebido_real_soma_pagamento_de_verdade():
+    comentarios = [
+        {"tipo": "-Pagamento Realizado", "titulo": "PAGAMENTO PIX", "texto": "Valor: R$ 377,00"},
+        {"tipo": "-Comentário", "titulo": "ACOMPANHAMENTO", "texto": "sem valor nenhum aqui"},
+    ]
+    relatar(
+        "recebido_real: soma pagamento de verdade normalmente (377,00)",
+        ap.recebido_real(comentarios) == 377.0,
+        f"resultado: {ap.recebido_real(comentarios)}",
+    )
+
+
+def teste_eh_observacao_monitor():
+    """Caso real: EDSON VINICIUS SOUZA DOS SANTOS aparecia como "primeira
+    vez" numa turma de entrada, mas o campo observacao do roster mostrava
+    "AG J2 A4 CONT MONITO" (truncado) - é monitor, não aluno novo."""
+    relatar(
+        'eh_observacao_monitor: "AG J2 A4 CONT MONITO" (truncado, caso real do EDSON) é reconhecido',
+        ap.eh_observacao_monitor("AG J2 A4 CONT MONITO") is True,
+        "",
+    )
+    relatar(
+        'eh_observacao_monitor: "MONITOR" por extenso também é reconhecido',
+        ap.eh_observacao_monitor("MONITOR") is True,
+        "",
+    )
+    relatar(
+        "eh_observacao_monitor: observação normal (ex: 'ADULTO', 'AG J1') não é marcada como monitor",
+        ap.eh_observacao_monitor("ADULTO") is False and ap.eh_observacao_monitor("AG J1") is False,
+        "",
+    )
+    relatar(
+        "eh_observacao_monitor: vazio/None não quebra e não é monitor",
+        ap.eh_observacao_monitor("") is False and ap.eh_observacao_monitor(None) is False,
+        "",
+    )
+
+
 def main():
     print("Rodando testes de academia_progresso.py (sem rede)...\n")
     teste_identificar_modulo()
@@ -380,6 +458,10 @@ def main():
     teste_turma_ainda_aberta_sem_data()
     teste_turma_ainda_aberta_data_ilegivel_nao_quebra()
     teste_eh_matricula_financeira_real()
+    teste_eh_comentario_pagamento_teste()
+    teste_recebido_real_ignora_comentarios_de_teste()
+    teste_recebido_real_soma_pagamento_de_verdade()
+    teste_eh_observacao_monitor()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

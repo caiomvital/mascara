@@ -73,10 +73,69 @@ def eh_matricula_financeira_real(contratado, recebido):
     à turma administrativamente).
 
     Decisão do usuário: quem pagou um sinal mesmo sem "Contratado" formal
-    preenchido ainda conta como matrícula real (ex real: JADSON AUGUSTO
-    PEREIRA DA ROSA - "-Matriculado", contratado=0 mas recebido=75 - só
-    exclui quem nunca teve nem contrato nem pagamento nenhum registrado."""
+    preenchido ainda conta como matrícula real - mas 'recebido' aqui
+    precisa ser o valor DE VERDADE (ver recebido_real), não o bruto de
+    perfil_aluno: achado real no mesmo dia, JADSON AUGUSTO PEREIRA DA
+    ROSA aparecia com recebido=75 só por causa de 2 comentários de TESTE
+    (sobra de teste de desenvolvimento gravada por engano nesse aluno
+    real) - sem eles, ele não tem nem contrato nem pagamento nenhum de
+    verdade e não deveria contar."""
     return (contratado or 0) > 0 or (recebido or 0) > 0
+
+
+def eh_comentario_pagamento_teste(titulo, texto):
+    """ACHADO (2026-09-18, mesma rodada): sobra de teste de
+    desenvolvimento gravada por engano num aluno REAL (JADSON AUGUSTO
+    PEREIRA DA ROSA) - 2 comentários "-Pagamento Realizado" com "teste"
+    no título/texto (ex: "TESTE - Pagamento Realizado (convenção)",
+    "Parcela: 2/1 (TESTE via endpoint HTTP)") fizeram o Fuctura contar
+    R$75 como recebido de verdade, quando o aluno nem assinou contrato
+    ainda. Por decisão do usuário, não mexe no histórico real do Fuctura
+    (não é seguro editar em lote) - só ignora esses comentários no
+    CÁLCULO de quem é matriculado de verdade (ver recebido_real)."""
+    alvo = f"{titulo or ''} {texto or ''}".lower()
+    return "teste" in alvo
+
+
+def recebido_real(comentarios):
+    """Soma os valores de pagamento REAIS do histórico de comentários de
+    um aluno (mesma detecção de fechamento_logic.checagem_financeira),
+    ignorando comentários de teste (ver eh_comentario_pagamento_teste).
+    Usado como segunda checagem só quando Contratado=0 no perfil (a zona
+    cinzenta de eh_matricula_financeira_real) - contratado>0 já basta
+    sozinho, não precisa dessa checagem extra (mais cara, precisa do
+    histórico completo de comentários)."""
+    total = 0.0
+    for c in comentarios:
+        titulo = c.get("titulo", "")
+        texto = c.get("texto", "")
+        if eh_comentario_pagamento_teste(titulo, texto):
+            continue
+        tipo_n = (c.get("tipo") or "").strip().lower()
+        texto_full = f"{titulo} {texto}"
+        e_pagamento = "pagamento realizado" in tipo_n or bool(logic.PAGAMENTO_RE.search(texto_full))
+        if not e_pagamento:
+            continue
+        m = logic.VALOR_RE.search(texto_full)
+        if not m:
+            continue
+        try:
+            total += float(m.group(1).replace(".", "").replace(",", "."))
+        except ValueError:
+            continue
+    return total
+
+
+def eh_observacao_monitor(observacao):
+    """ACHADO (2026-09-18, mesma rodada): EDSON VINICIUS SOUZA DOS SANTOS
+    aparecia como "matriculado de primeira vez" numa turma de entrada
+    (J1), mas na verdade é MONITOR (ex-aluno ajudando o professor) - o
+    próprio campo 'observacao' do roster já mostra isso (ex real: "AG J2
+    A4 CONT MONITO" - truncado, mas reconhecível). Monitor não é aluno
+    novo nem matrícula de verdade pro propósito desta tela - não conta.
+    Checagem por substring (não só "MONITOR" inteiro) porque o Fuctura
+    trunca esse campo em telas de listagem."""
+    return "monito" in (observacao or "").lower()
 
 
 def turma_ainda_aberta(data_termino_str, hoje=None):
