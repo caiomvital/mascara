@@ -61,6 +61,24 @@ def eh_status_matriculado_real(status):
     return (status or "").strip() not in STATUS_NAO_MATRICULADO_DE_VERDADE
 
 
+def eh_matricula_financeira_real(contratado, recebido):
+    """ACHADO (2026-09-18, terceira rodada - "tem que ver se esses
+    realmente estão matriculados ou só foram matriculados na turma, sem
+    ser matriculados de verdade"): status != Interessado/Cancelado NÃO
+    garante matrícula de verdade - cruzando o roster de uma turma real com
+    o financeiro de cada aluno (perfil_aluno), achei gente com status
+    "Devedor" e até "-Matriculado" com Contratado = R$ 0,00 e nunca pagou
+    nada (ex real: LUANA DE LIMA POROCA ALMEIDA - Devedor, contratado=0,
+    recebido=0 - nunca assinou contrato nem pagou nada, só ficou vinculada
+    à turma administrativamente).
+
+    Decisão do usuário: quem pagou um sinal mesmo sem "Contratado" formal
+    preenchido ainda conta como matrícula real (ex real: JADSON AUGUSTO
+    PEREIRA DA ROSA - "-Matriculado", contratado=0 mas recebido=75 - só
+    exclui quem nunca teve nem contrato nem pagamento nenhum registrado."""
+    return (contratado or 0) > 0 or (recebido or 0) > 0
+
+
 def turma_ainda_aberta(data_termino_str, hoje=None):
     """True se a turma ainda não terminou (dataTermino de obter_turma() é
     hoje ou no futuro) - trata data ausente/ilegível como aberta (sem dado

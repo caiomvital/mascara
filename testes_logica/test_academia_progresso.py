@@ -320,6 +320,40 @@ def teste_turma_ainda_aberta_data_ilegivel_nao_quebra():
     )
 
 
+def teste_eh_matricula_financeira_real():
+    """Casos reais achados ao vivo (2026-09-18, "tem que ver se esses
+    realmente estão matriculados ou só foram matriculados na turma, sem
+    ser matriculados de verdade"): LUANA (Devedor, contratado=0,
+    recebido=0) nunca pagou nada - não é matrícula real. JADSON
+    ("-Matriculado", contratado=0, recebido=75) pagou um sinal mesmo sem
+    Contratado formal - decisão do usuário: ainda conta."""
+    relatar(
+        "eh_matricula_financeira_real: contratado=0 e recebido=0 -> não é matrícula real (caso real: LUANA)",
+        ap.eh_matricula_financeira_real(0.0, 0.0) is False,
+        "",
+    )
+    relatar(
+        "eh_matricula_financeira_real: contratado=0 mas recebido>0 -> conta (caso real: JADSON, pagou sinal de R$75)",
+        ap.eh_matricula_financeira_real(0.0, 75.0) is True,
+        "",
+    )
+    relatar(
+        "eh_matricula_financeira_real: contratado>0 mesmo com recebido=0 -> conta (contrato assinado, ainda não pago)",
+        ap.eh_matricula_financeira_real(4901.0, 0.0) is True,
+        "",
+    )
+    relatar(
+        "eh_matricula_financeira_real: contratado>0 e recebido>0 -> conta",
+        ap.eh_matricula_financeira_real(4901.0, 4901.0) is True,
+        "",
+    )
+    relatar(
+        "eh_matricula_financeira_real: None em qualquer um dos dois não quebra (trata como 0)",
+        ap.eh_matricula_financeira_real(None, None) is False,
+        "",
+    )
+
+
 def main():
     print("Rodando testes de academia_progresso.py (sem rede)...\n")
     teste_identificar_modulo()
@@ -345,6 +379,7 @@ def main():
     teste_turma_ainda_aberta_data_passada()
     teste_turma_ainda_aberta_sem_data()
     teste_turma_ainda_aberta_data_ilegivel_nao_quebra()
+    teste_eh_matricula_financeira_real()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

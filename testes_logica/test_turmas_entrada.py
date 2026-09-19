@@ -3,7 +3,7 @@ Testes de regressao pra _montar_turmas_entrada() (app.py) - card "Turmas de
 Entrada" (J1/PY1) na tela inicial. Sem rede nenhuma, com um FucturaClient
 falso.
 
-Cobre bugs reais achados ao vivo em 2026-09-18, em duas rodadas (relatado
+Cobre bugs reais achados ao vivo em 2026-09-18, em três rodadas (relatado
 pelo usuario):
 
 Rodada 1 - "So apareceram turmas de python. E nao consigo clicar pra ver
@@ -26,6 +26,16 @@ menos":
   4. O corte pras N mais recentes só olhava a data embutida no NOME da
      turma (início) - não checava se ela já tinha TERMINADO (dataTermino
      de obter_turma()). Corrigido: turma já terminada não entra na lista.
+
+Rodada 3 - "Tem que ver se esses realmente estão matriculados ou só
+foram matriculados na turma, sem ser matriculados de verdade":
+  5. Status != Interessado/Cancelado não garante matrícula de verdade -
+     cruzando o roster com o financeiro (perfil_aluno) achei gente com
+     status "Devedor"/"-Matriculado" com Contratado = R$0,00 e nunca
+     pagou nada (caso real: LUANA DE LIMA POROCA ALMEIDA). Corrigido:
+     exige contratado > 0 OU já pagou algo (decisão do usuário: quem
+     pagou um sinal mesmo sem Contratado formal ainda conta - caso real:
+     JADSON, contratado=0 mas recebido=75).
 
 Como rodar:
     cd testes_logica
@@ -63,10 +73,11 @@ class _ClienteFake:
     devolve {"dataTermino": ...} por id_turma - turma sem entrada em
     `detalhe_por_id` conta como sem dataTermino (aberta por padrão)."""
 
-    def __init__(self, turmas_por_termo, roster_por_id, detalhe_por_id=None):
+    def __init__(self, turmas_por_termo, roster_por_id, detalhe_por_id=None, perfil_por_id=None):
         self._turmas_por_termo = turmas_por_termo
         self._roster_por_id = roster_por_id
         self._detalhe_por_id = detalhe_por_id or {}
+        self._perfil_por_id = perfil_por_id or {}
 
     def buscar_turma_por_nome(self, termo):
         return self._turmas_por_termo.get(termo, [])
@@ -77,13 +88,18 @@ class _ClienteFake:
     def obter_turma(self, id_turma):
         return self._detalhe_por_id.get(id_turma, {"dataTermino": ""})
 
+    def perfil_aluno(self, id_aluno):
+        # default = financeiro real (contratado>0), pra nao quebrar testes
+        # que nao se importam com o filtro financeiro.
+        return self._perfil_por_id.get(id_aluno, {"contratado": 9999.0, "recebido": 9999.0})
+
 
 def _turma(id_turma, nome):
     return {"id_turma": id_turma, "nome": nome}
 
 
-def _aluno(nome, status=None):
-    return {"nome": nome, "status": status}
+def _aluno(nome, status=None, id_aluno=None):
+    return {"nome": nome, "status": status, "id_aluno": id_aluno or nome}
 
 
 def teste_busca_com_ponto_prefixado_nao_com_modulo_cru():
@@ -202,6 +218,36 @@ def teste_devedor_e_advogado_continuam_contando():
     )
 
 
+def teste_status_ok_mas_sem_contrato_nem_pagamento_nao_conta():
+    """Regressão direta do relatado (terceira rodada): "tem que ver se
+    esses realmente estão matriculados ou só foram matriculados na turma,
+    sem ser matriculados de verdade" - status "Devedor"/"-Matriculado" não
+    garante matrícula real; cruza com o financeiro (perfil_aluno). Casos
+    reais: LUANA (Devedor, contratado=0, recebido=0 - fora), JADSON
+    ("-Matriculado", contratado=0, recebido=75 - conta, pagou um sinal)."""
+    client = _ClienteFake(
+        turmas_por_termo={".J1": [_turma("1", ".J1 08/07/25 TER N")], ".PY1": []},
+        roster_por_id={"1": [
+            _aluno("LUANA", "Devedor", id_aluno="luana"),
+            _aluno("JADSON", "-Matriculado", id_aluno="jadson"),
+            _aluno("ALEF", "Devedor", id_aluno="alef"),
+        ]},
+        perfil_por_id={
+            "luana": {"contratado": 0.0, "recebido": 0.0},
+            "jadson": {"contratado": 0.0, "recebido": 75.0},
+            "alef": {"contratado": 4901.0, "recebido": 100.0},
+        },
+    )
+    resultado = app._montar_turmas_entrada(client)
+    turma = resultado["turmas"][0]
+    nomes_listados = {a["nome"] for a in turma["alunos"]}
+    relatar(
+        "LUANA (contratado=0, recebido=0) fica de fora; JADSON (pagou sinal) e ALEF (contrato assinado) contam",
+        turma["total_matriculados"] == 2 and nomes_listados == {"JADSON", "ALEF"},
+        f"total={turma['total_matriculados']} alunos listados={nomes_listados}",
+    )
+
+
 def teste_turma_ja_terminada_e_excluida():
     """Regressão direta do relatado: "não tem 30 turmas abertas, tem bem
     menos" - turma com dataTermino no passado não pode aparecer, mesmo
@@ -252,6 +298,7 @@ def main():
     teste_turma_sem_ninguem_nao_quebra()
     teste_interessado_e_cancelado_nao_contam()
     teste_devedor_e_advogado_continuam_contando()
+    teste_status_ok_mas_sem_contrato_nem_pagamento_nao_conta()
     teste_turma_ja_terminada_e_excluida()
     teste_turma_sem_data_termino_conta_como_aberta()
 

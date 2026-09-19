@@ -975,7 +975,22 @@ def _montar_turmas_entrada(client):
         turma (data de INICIO) - nao checava se ela ja tinha TERMINADO.
         Corrigido: so entra na lista quem ainda nao terminou, pela
         dataTermino de verdade (obter_turma), nao pelo nome
-        (academia_progresso.turma_ainda_aberta)."""
+        (academia_progresso.turma_ainda_aberta).
+
+    ACHADO 3 (2026-09-18, terceira rodada, relatado pelo usuario: "Tem que
+    ver se esses realmente estao matriculados ou so foram matriculados na
+    turma, sem ser matriculados de verdade"): status != Interessado/
+    Cancelado NAO garante matricula de verdade - cruzando o roster com o
+    financeiro de cada aluno (perfil_aluno) achei gente com status
+    "Devedor" e ate "-Matriculado" com Contratado = R$0,00 e nunca pagou
+    nada (ex real: LUANA DE LIMA POROCA ALMEIDA - Devedor, contratado=0,
+    recebido=0 - so ficou vinculada a turma administrativamente). Por
+    decisao do usuario, quem pagou um sinal mesmo sem "Contratado" formal
+    preenchido ainda conta (ex real: JADSON - "-Matriculado", contratado=0
+    mas recebido=75) - ver academia_progresso.eh_matricula_financeira_real.
+    Isso exige 1 chamada extra (perfil_aluno) por candidato que passar no
+    filtro de status - aceitavel dado que agora sao poucas turmas abertas
+    (ver ACHADO 2) com poucos candidatos cada."""
     candidatas = []
     for modulo in academia_progresso.MODULOS_ENTRADA:
         encontradas = client.buscar_turma_por_nome("." + modulo)
@@ -992,7 +1007,15 @@ def _montar_turmas_entrada(client):
         if not academia_progresso.turma_ainda_aberta(data_termino):
             continue
         roster = client.roster_turma(t["id_turma"])
-        analise = academia_progresso.analisar_turma_entrada(t["nome"], roster)
+        matriculados_de_verdade = []
+        for a in roster:
+            if not academia_progresso.eh_status_matriculado_real(a.get("status")):
+                continue
+            perfil = client.perfil_aluno(a["id_aluno"])
+            if not academia_progresso.eh_matricula_financeira_real(perfil.get("contratado"), perfil.get("recebido")):
+                continue
+            matriculados_de_verdade.append(a)
+        analise = academia_progresso.analisar_turma_entrada(t["nome"], matriculados_de_verdade)
         turmas.append({
             **analise, "id_turma": t["id_turma"],
             "data": analise["data"].strftime("%d/%m/%Y") if analise["data"] else None,
@@ -1002,8 +1025,7 @@ def _montar_turmas_entrada(client):
             # matriculou de verdade (mesmo filtro do total/primeira_vez).
             "alunos": [
                 {"nome": a["nome"], "categoria": academia_progresso.categoria_nome(a["nome"])}
-                for a in roster
-                if academia_progresso.eh_status_matriculado_real(a.get("status"))
+                for a in matriculados_de_verdade
             ],
         })
     return {"turmas": turmas, "limiar_minimo": academia_progresso.LIMIAR_MINIMO_TURMA_ENTRADA}
