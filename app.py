@@ -27,6 +27,7 @@ import cora_client
 import drive_client
 import email_cobranca
 import extrato_bancario
+import fotos_aluno
 import gmail_client
 import manutencao
 import fechamento_logic as logic
@@ -1193,6 +1194,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _send_imagem_jpeg(self, content):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "private, max-age=300")
+        self.end_headers()
+        self.wfile.write(content)
+
     def _redirect(self, path, cookie=None):
         self.send_response(302)
         self.send_header("Location", path)
@@ -1459,6 +1468,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"erro": "O Fuctura não retornou um PDF de ficha pra este aluno."}, 500)
                 return
             self._send_pdf(pdf, f"ficha_{id_aluno}.pdf")
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/foto"):
+            id_aluno = parsed.path.split("/")[3]
+            dados = fotos_aluno.ler_foto(id_aluno)
+            if dados is None:
+                self._send_json({"erro": "Este aluno ainda não tem foto cadastrada."}, 404)
+                return
+            self._send_imagem_jpeg(dados)
             return
 
         if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/boletos-cora"):
@@ -1876,6 +1894,17 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             self._editar_comentario_aluno(sessao, id_aluno, id_acomp, body)
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/foto/remover"):
+            id_aluno = parsed.path.split("/")[3]
+            fotos_aluno.remover_foto(id_aluno)
+            self._send_json({"ok": True})
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/foto"):
+            id_aluno = parsed.path.split("/")[3]
+            self._upload_foto_aluno(id_aluno)
             return
 
         if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/situacao"):
@@ -2441,6 +2470,33 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         self._send_json({"ok": True, **base, "modo": "ia", "provedor": prov, "resumo_ia": (texto or "").strip()})
+
+    def _upload_foto_aluno(self, id_aluno):
+        """Foto de aluno e uma funcionalidade nova, guardada só localmente
+        no servidor - o Fuctura não tem esse campo (confirmado ao vivo,
+        2026-09-22). Não escreve nada no Fuctura, então não precisa da
+        mesma cautela de confirmação individual usada nas gravações reais
+        lá (ver fotos_aluno.py) - só valida e salva."""
+        ctype = self.headers.get("Content-Type", "")
+        m = re.search(r"boundary=(.+)", ctype)
+        if not m:
+            self._send_json({"erro": "upload inválido"}, 400)
+            return
+        boundary = m.group(1).strip().strip('"')
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        partes = parse_multipart(body, boundary)
+
+        arquivo = next((p for p in partes if p["name"] == "foto" and p["filename"]), None)
+        if not arquivo:
+            self._send_json({"erro": "Nenhum arquivo enviado."}, 400)
+            return
+        try:
+            fotos_aluno.salvar_foto(id_aluno, arquivo["content"])
+        except ValueError as e:
+            self._send_json({"erro": str(e)}, 400)
+            return
+        self._send_json({"ok": True})
 
     def _criar_comentario_aluno(self, sessao, id_aluno, body):
         """Grava UM comentário manual no aluno, escrito diretamente pelo
@@ -3831,7 +3887,19 @@ async function selecionar(idAluno) {
 
   div.innerHTML = `
     <div class="card">
-      <h2 style="margin-top:0;">${c.nome}</h2>
+      <div style="display:flex; gap:16px; align-items:flex-start; margin-bottom:10px;">
+        <div style="width:110px; height:110px; border-radius:8px; overflow:hidden; background:var(--surface-alt); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+          <img id="fotoImg" src="/api/aluno/${idAluno}/foto?t=${Date.now()}" style="width:100%; height:100%; object-fit:cover;" onerror="this.hidden=true; document.getElementById('fotoPlaceholder').hidden=false;">
+          <div id="fotoPlaceholder" class="fonte" style="text-align:center; padding:8px;" hidden>Sem foto</div>
+        </div>
+        <div>
+          <h2 style="margin-top:0; margin-bottom:8px;">${c.nome}</h2>
+          <input type="file" id="fotoInput" accept="image/jpeg,image/png,image/webp" hidden onchange="enviarFoto('${idAluno}')">
+          <button class="acao" style="font-size:0.78rem; padding:5px 12px;" onclick="document.getElementById('fotoInput').click()">Trocar foto</button>
+          <button class="btn-nao" style="font-size:0.78rem; padding:5px 12px;" onclick="removerFoto('${idAluno}')">Remover foto</button>
+          <div id="fotoStatus" class="fonte" style="margin-top:4px;"></div>
+        </div>
+      </div>
       <table>
         <tr><th>Situação</th><td>${d.status_label}</td></tr>
         <tr><th>Matrícula</th><td>${c.matricula}</td></tr>
@@ -4059,6 +4127,32 @@ async function selecionar(idAluno) {
       ).join('');
     }, 300);
   });
+}
+
+async function enviarFoto(idAluno) {
+  const input = document.getElementById('fotoInput');
+  if (!input.files.length) return;
+  const status = document.getElementById('fotoStatus');
+  status.textContent = 'Enviando...';
+  const fd = new FormData();
+  fd.append('foto', input.files[0]);
+  const r = await fetch(`/api/aluno/${idAluno}/foto`, { method: 'POST', body: fd });
+  const d = await r.json();
+  if (d.erro) { status.textContent = 'Erro: ' + d.erro; return; }
+  status.textContent = '';
+  input.value = '';
+  const img = document.getElementById('fotoImg');
+  img.hidden = false;
+  document.getElementById('fotoPlaceholder').hidden = true;
+  img.src = `/api/aluno/${idAluno}/foto?t=${Date.now()}`;
+}
+
+async function removerFoto(idAluno) {
+  const r = await fetch(`/api/aluno/${idAluno}/foto/remover`, { method: 'POST' });
+  const d = await r.json();
+  if (d.erro) { document.getElementById('fotoStatus').textContent = 'Erro: ' + d.erro; return; }
+  document.getElementById('fotoImg').hidden = true;
+  document.getElementById('fotoPlaceholder').hidden = false;
 }
 
 function escolherTurmaComentario(id, nome) {

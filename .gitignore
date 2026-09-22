@@ -16,6 +16,7 @@ __pycache__/
 # Artefatos locais e dados reais de teste/auditoria (nomes/telefones/
 # ata de aluno de verdade - nunca no repositório, mesmo privado)
 atas_recebidas/
+fotos_alunos/
 dist/
 testes_atas/
 achados_auditoria.csv
