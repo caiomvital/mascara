@@ -43,6 +43,52 @@ def teste_identificar_modulo():
     relatar("identificar_modulo: curso fora do mapa 'BL1 2025 8h30 Sab' (Bíblia) -> None", ap.identificar_modulo("BL1 2025 8h30 Sab") is None, "")
 
 
+def teste_identificar_modulo_nomenclatura_antiga_j3_j4():
+    """Achado real (2026-09-22, relatado pelo usuário: "tentei acessar
+    minha página como aluno... e não achei o botão de certificado") -
+    CAIO DE MATOS VITAL completou Java em 2021 com turmas ".J3"/".J4" (a
+    nomenclatura ANTIGA do Fuctura pro 3º/4º módulo - confirmado ao vivo:
+    80 turmas reais de 2017-2021 usam esse padrão) - sem isso,
+    curso_completo/eh_ex_aluno_de_verdade davam False incorretamente pra
+    quem se formou usando a nomenclatura antiga."""
+    relatar(
+        "identificar_modulo: '.J3 18/09/21 Sab T' (nomenclatura antiga) -> JS3 (código canônico)",
+        ap.identificar_modulo(".J3 18/09/21 Sab T") == "JS3",
+        "",
+    )
+    relatar(
+        "identificar_modulo: '.J4 14/08/21 Sab T' (nomenclatura antiga) -> JA4 (código canônico)",
+        ap.identificar_modulo(".J4 14/08/21 Sab T") == "JA4",
+        "",
+    )
+    relatar(
+        "identificar_modulo: 'J3 29/01/22 Sab M' sem ponto também reconhece",
+        ap.identificar_modulo("J3 29/01/22 Sab M") == "JS3",
+        "",
+    )
+
+
+def teste_curso_completo_com_nomenclatura_antiga_j3_j4():
+    """Regressão direta do caso real: histórico de turmas usando "J3"/
+    "J4" em vez de "JS3"/"JA4" tem que contar como trilha completa."""
+    turmas_caio = [
+        {"data": "11/01/2021", "nome": "J1 23/01/21 Sab M"},
+        {"data": "05/03/2021", "nome": "J2 06/03/21 OL Sab T"},
+        {"data": "06/09/2021", "nome": "J3 18/09/21 Sab T"},
+        {"data": "04/08/2021", "nome": "J4 14/08/21 Sab T"},
+    ]
+    relatar(
+        "curso_completo: histórico real com J1/J2/J3/J4 (nomenclatura antiga) conta como Java completo",
+        ap.curso_completo(turmas_caio, "java") is True,
+        f"módulos reconhecidos: {ap.modulos_cursados(turmas_caio, 'java')}",
+    )
+    relatar(
+        "eh_ex_aluno_de_verdade: caso real do CAIO DE MATOS VITAL (Ex-aluno, sem marca no nome) agora dá True",
+        ap.eh_ex_aluno_de_verdade("CAIO DE MATOS VITAL", "Ex-aluno", turmas_caio, trilha="java") is True,
+        "",
+    )
+
+
 def teste_identificar_trilha():
     relatar("identificar_trilha: JA4 -> java", ap.identificar_trilha("JA4") == "java", "")
     relatar("identificar_trilha: PY3 -> python", ap.identificar_trilha("PY3") == "python", "")
@@ -552,6 +598,8 @@ def teste_eh_observacao_monitor():
 def main():
     print("Rodando testes de academia_progresso.py (sem rede)...\n")
     teste_identificar_modulo()
+    teste_identificar_modulo_nomenclatura_antiga_j3_j4()
+    teste_curso_completo_com_nomenclatura_antiga_j3_j4()
     teste_identificar_trilha()
     teste_curso_completo_java()
     teste_curso_completo_python_independente_de_java()

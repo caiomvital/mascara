@@ -190,15 +190,33 @@ def turma_ainda_aberta(data_termino_str, hoje=None):
 # de abandono/refazendo, que fica no nome do ALUNO, não da turma) -
 # ex: "JA4 25/07/26 Sab M", "J1 08/07/25 TER N", "PY2 01/07/23 Sab T".
 # \b depois da sigla evita "J1" casar com "J12" ou coisa parecida.
-_RE_MODULO = re.compile(r"^\.?\s*(J1|J2|JS3|JA4|PY1|PY2|PY3|PY4)\b", re.IGNORECASE)
+#
+# ACHADO REAL (2026-09-22, relatado pelo usuário - "tentei acessar minha
+# página como aluno... e não achei o botão de certificado"): o próprio
+# usuário (Caio de Matos Vital, id 33199) completou Java em 2021
+# (J1->J2->J3->J4), mas curso_completo/eh_ex_aluno_de_verdade davam False
+# porque só "JS3"/"JA4" eram reconhecidos - a nomenclatura ANTIGA do
+# Fuctura pro 3º/4º módulo de Java era "J3"/"J4" (achado confirmado ao
+# vivo: 80 turmas de 2017-2021 usam esse padrão, buscando ".J3"/".J4").
+# Python NÃO tem esse problema (nomenclatura sempre foi "PY3"/"PY4" -
+# confirmado ao vivo, buscar ".P3"/".P4" não acha nada). "J3"/"J4" viram
+# os códigos canônicos "JS3"/"JA4" aqui, pra tudo mais no sistema (Ex-
+# aluno de verdade, restrição de quem pode marcar Ex-aluno, certificado)
+# continuar funcionando sem precisar saber dessa nomenclatura antiga.
+_RE_MODULO = re.compile(r"^\.?\s*(J1|J2|JS3|JA4|J3|J4|PY1|PY2|PY3|PY4)\b", re.IGNORECASE)
+_ALIAS_MODULO_ANTIGO = {"J3": "JS3", "J4": "JA4"}
 
 
 def identificar_modulo(nome_turma):
     """Extrai a sigla do módulo (ex: 'JA4') do nome de uma turma, ou None
     se não bater com nenhuma sequência conhecida (turma de controle,
-    curso fora de Java/Python, etc.)."""
+    curso fora de Java/Python, etc.). Nomenclatura antiga "J3"/"J4" (ver
+    _ALIAS_MODULO_ANTIGO) já sai traduzida pro código canônico."""
     m = _RE_MODULO.match((nome_turma or "").strip())
-    return m.group(1).upper() if m else None
+    if not m:
+        return None
+    codigo = m.group(1).upper()
+    return _ALIAS_MODULO_ANTIGO.get(codigo, codigo)
 
 
 def identificar_trilha(modulo):
