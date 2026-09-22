@@ -1,6 +1,9 @@
 # Notas que não devem ir pro deploy / entrega de código
 NOTAS_PRIVADAS.md
 
+# Config pessoal do Claude Code (permissões locais, não é pra time nenhum)
+.claude/settings.local.json
+
 # Estado e config de runtime
 manutencao.json
 config.json
