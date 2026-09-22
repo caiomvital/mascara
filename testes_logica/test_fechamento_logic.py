@@ -832,6 +832,58 @@ def teste_nota_verificacao_abandono_confere_status_de_verdade():
     )
 
 
+def teste_limpar_nome_para_exibicao_remove_sufixo_boleto():
+    """Caso real (2026-09-22, testando certificado com aluno real):
+    "LUIS HENRIQUE ANDRADE DE MOURA BARBOSA (BOLETO)" vazava a anotação
+    administrativa pro certificado."""
+    relatar(
+        'limpar_nome_para_exibicao: remove sufixo "(BOLETO)"',
+        logic.limpar_nome_para_exibicao("LUIS HENRIQUE ANDRADE DE MOURA BARBOSA (BOLETO)") == "LUIS HENRIQUE ANDRADE DE MOURA BARBOSA",
+        "",
+    )
+
+
+def teste_limpar_nome_para_exibicao_remove_prefixo_asterisco():
+    """Caso real: "*JOAO CARLOS LINS DOS SANTOS" - o "*" não faz parte
+    do nome de verdade da pessoa."""
+    relatar(
+        'limpar_nome_para_exibicao: remove prefixo "*"',
+        logic.limpar_nome_para_exibicao("*JOAO CARLOS LINS DOS SANTOS") == "JOAO CARLOS LINS DOS SANTOS",
+        "",
+    )
+
+
+def teste_limpar_nome_para_exibicao_remove_marca_refazendo_abandono():
+    relatar(
+        'limpar_nome_para_exibicao: remove marca "-" de refazendo',
+        logic.limpar_nome_para_exibicao("-DANIEL DE SENA FLORENCIO") == "DANIEL DE SENA FLORENCIO",
+        "",
+    )
+    relatar(
+        'limpar_nome_para_exibicao: remove marca "." de abandono',
+        logic.limpar_nome_para_exibicao(".MIGUEL VINICIUS") == "MIGUEL VINICIUS",
+        "",
+    )
+
+
+def teste_limpar_nome_para_exibicao_preserva_maiusculas_e_acentos():
+    """Diferente de norm_nome_aluno (feito pra COMPARAR, minusculiza e
+    tira acento) - esta versão é pra MOSTRAR pro aluno, preserva tudo."""
+    relatar(
+        "limpar_nome_para_exibicao: preserva maiúsculas e acentos (não é pra comparação, é pra exibição)",
+        logic.limpar_nome_para_exibicao("José da Conceição Araújo") == "José da Conceição Araújo",
+        "",
+    )
+
+
+def teste_limpar_nome_para_exibicao_nome_normal_nao_muda():
+    relatar(
+        "limpar_nome_para_exibicao: nome sem marca nenhuma continua igual",
+        logic.limpar_nome_para_exibicao("MARIA EDUARDA SILVA") == "MARIA EDUARDA SILVA",
+        "",
+    )
+
+
 def main():
     print("Rodando testes de fechamento_logic.py (funções sem teste anterior)...\n")
     teste_telefone_casa_com_variacao_de_ddi_ddd()
@@ -890,6 +942,11 @@ def main():
     teste_turmas_no_mesmo_mes_ano_acha_e_exclui_a_turma_atual()
     teste_turmas_no_mesmo_mes_ano_sem_data_referencia_nao_quebra()
     teste_nota_verificacao_abandono_confere_status_de_verdade()
+    teste_limpar_nome_para_exibicao_remove_sufixo_boleto()
+    teste_limpar_nome_para_exibicao_remove_prefixo_asterisco()
+    teste_limpar_nome_para_exibicao_remove_marca_refazendo_abandono()
+    teste_limpar_nome_para_exibicao_preserva_maiusculas_e_acentos()
+    teste_limpar_nome_para_exibicao_nome_normal_nao_muda()
 
     print(f"\n{'=' * 70}")
     print(f"Total OK: {_ok_count} | Total FALHOU: {len(_falhas)}")

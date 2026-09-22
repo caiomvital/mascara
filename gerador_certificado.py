@@ -22,6 +22,8 @@ from datetime import datetime
 
 import fitz
 
+import fechamento_logic as logic
+
 DIRETORIO_TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certificados")
 
 TEMPLATE_JAVA_PYTHON = os.path.join(DIRETORIO_TEMPLATES, "FUC - CERTIFICADO01.png")
@@ -119,6 +121,15 @@ def gerar_certificado_trilha_pdf(nome_aluno, trilha, data_conclusao=None):
     if trilha not in MODULOS_TRILHA:
         raise ValueError(f"Trilha desconhecida: {trilha!r} (use 'java' ou 'python')")
 
+    # ACHADO REAL (2026-09-22, testando com aluno real de verdade): nome
+    # do cadastro no Fuctura pode trazer sufixo administrativo tipo
+    # "(BOLETO)" ou prefixo "*" - nunca faz parte do nome de verdade da
+    # pessoa, mas vazava pro certificado (ex real: "LUIS HENRIQUE ANDRADE
+    # DE MOURA BARBOSA (BOLETO)"). Reaproveita a mesma limpeza já usada
+    # pro casamento de nome da ata (fechamento_logic.norm_nome_aluno),
+    # só que preservando maiúsculas/acentos pra exibição.
+    nome_aluno = logic.limpar_nome_para_exibicao(nome_aluno)
+
     doc, pagina = _nova_pagina(TEMPLATE_JAVA_PYTHON)
 
     total_horas = sum(h for _, h in MODULOS_TRILHA[trilha])
@@ -161,6 +172,12 @@ def gerar_certificado_biblia3d_pdf(nome_aluno, cidade="Recife", data_conclusao=N
     """Só o Módulo I por enquanto (pedido do usuário, 2026-09-22 - a
     Bíblia 3D ainda não tem outros módulos mapeados). Retorna bytes do
     PDF."""
+    # ACHADO REAL (2026-09-22, testando com aluno real de verdade): nome
+    # do cadastro no Fuctura pode trazer prefixo "*" ou sufixo tipo
+    # "(BOLETO)" - ver mesmo achado em gerar_certificado_trilha_pdf (ex
+    # real aqui: "*JOAO CARLOS LINS DOS SANTOS").
+    nome_aluno = logic.limpar_nome_para_exibicao(nome_aluno)
+
     doc, pagina = _nova_pagina(TEMPLATE_BIBLIA3D)
 
     # caixa arredondada com o nome - o template em branco não tem essa

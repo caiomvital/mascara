@@ -170,6 +170,31 @@ def teste_gerar_certificado_biblia3d_nome_comprido_nao_quebra():
     )
 
 
+def teste_gerar_certificado_trilha_limpa_sufixo_administrativo_do_nome():
+    """Caso real (2026-09-22, testando com aluno real de verdade): LUIS
+    HENRIQUE ANDRADE DE MOURA BARBOSA tinha "(BOLETO)" cravado no nome do
+    cadastro - vazava pro certificado antes da correção."""
+    pdf = gc.gerar_certificado_trilha_pdf("LUIS HENRIQUE ANDRADE DE MOURA BARBOSA (BOLETO)", "python", datetime(2026, 9, 22))
+    texto = _texto_pdf(pdf)
+    relatar(
+        'certificado: "(BOLETO)" não aparece no nome mostrado',
+        "LUIS HENRIQUE ANDRADE DE MOURA BARBOSA" in texto and "(BOLETO)" not in texto,
+        texto[:200],
+    )
+
+
+def teste_gerar_certificado_biblia3d_limpa_prefixo_asterisco_do_nome():
+    """Caso real: "*JOAO CARLOS LINS DOS SANTOS" - o "*" não faz parte
+    do nome de verdade da pessoa."""
+    pdf = gc.gerar_certificado_biblia3d_pdf("*JOAO CARLOS LINS DOS SANTOS", data_conclusao=datetime(2026, 9, 22))
+    texto = _texto_pdf(pdf)
+    relatar(
+        'certificado bíblia 3D: "*" não aparece no nome mostrado',
+        "JOAO CARLOS LINS DOS SANTOS" in texto and "*JOAO" not in texto,
+        texto[:200],
+    )
+
+
 def teste_elegivel_para_certificado_delega_pra_academia_progresso():
     """elegivel_para_certificado reaproveita eh_ex_aluno_de_verdade -
     confere só que a delegação funciona (a lógica em si já é testada a
@@ -208,6 +233,8 @@ def main():
     teste_gerar_certificado_biblia3d_produz_pdf_valido()
     teste_gerar_certificado_biblia3d_cidade_customizada()
     teste_gerar_certificado_biblia3d_nome_comprido_nao_quebra()
+    teste_gerar_certificado_trilha_limpa_sufixo_administrativo_do_nome()
+    teste_gerar_certificado_biblia3d_limpa_prefixo_asterisco_do_nome()
     teste_elegivel_para_certificado_delega_pra_academia_progresso()
 
     print(f"\n{'=' * 70}")

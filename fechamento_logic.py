@@ -156,6 +156,18 @@ def norm_nome_aluno(s):
     return norm(s)
 
 
+def limpar_nome_para_exibicao(s):
+    """Mesma limpeza de norm_nome_aluno (prefixo administrativo './-/*',
+    sufixo tipo '(BOLETO)'/'(ADVOGADO)') mas SEM minusculizar/tirar acento
+    - pra mostrar o nome pro próprio aluno (ex: certificado de conclusão),
+    não pra comparar/casar. Achado real (2026-09-22, testando certificado
+    com alunos reais): "LUIS HENRIQUE ... (BOLETO)" e "*JOAO CARLOS ..."
+    vazavam a anotação administrativa pro documento formal do aluno."""
+    s = re.sub(r"\(.*?\)", " ", s or "")
+    s = re.sub(r"^[.\-*+\s]+", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 RANK_CONFIANCA = {"alta": 2, "media": 1, "baixa": 0}
 
 
