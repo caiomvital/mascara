@@ -182,6 +182,123 @@ def teste_indicador_funil_turma_vazia_nao_quebra():
     )
 
 
+def teste_eh_observacao_refazendo():
+    """Casos reais (2026-09-18, revisão comentário a comentário pedida
+    pelo usuário): DAVID ARMSTRONG SOARES SIMAO (nome sem marca,
+    observacao='J1 REF', comentário confirma "pediu para refazer J1") e
+    MARCOS AUGUSTO FERREIRA CAMPOS (observacao='PY1 PRES J2 CONT' - aluno
+    de Java continuando, não aluno novo de Python)."""
+    relatar(
+        "eh_observacao_refazendo: 'J1 REF' é reconhecido (caso real: DAVID ARMSTRONG)",
+        ap.eh_observacao_refazendo("J1 REF") is True,
+        "",
+    )
+    relatar(
+        "eh_observacao_refazendo: 'PY1 PRES J2 CONT' é reconhecido (caso real: MARCOS AUGUSTO)",
+        ap.eh_observacao_refazendo("PY1 PRES J2 CONT") is True,
+        "",
+    )
+    relatar(
+        "eh_observacao_refazendo: observação normal ('PY1 PRES', 'ADULTO', 'AG J1') não é marcada",
+        ap.eh_observacao_refazendo("PY1 PRES") is False
+        and ap.eh_observacao_refazendo("ADULTO") is False
+        and ap.eh_observacao_refazendo("AG J1") is False,
+        "",
+    )
+    relatar(
+        "eh_observacao_refazendo: vazio/None não quebra e não é refazendo",
+        ap.eh_observacao_refazendo("") is False and ap.eh_observacao_refazendo(None) is False,
+        "",
+    )
+
+
+def teste_indicador_funil_turma_observacao_refazendo_sem_marca_no_nome():
+    """Regressão direta: nome sem marca "-" mas observação com REF/CONT
+    não pode contar como primeira vez - achado ao vivo (DAVID ARMSTRONG,
+    ALBERTO RICARDO: nomes sem marca, mas genuinamente refazendo)."""
+    roster = [
+        {"nome": "DAVID ARMSTRONG SOARES SIMAO", "observacao": "J1 REF"},
+        {"nome": "MARCOS AUGUSTO FERREIRA CAMPOS", "observacao": "PY1 PRES J2 CONT"},
+        {"nome": "ALEF ADONAIS SEVERINO DA SILVA", "observacao": "J1 PRES"},
+    ]
+    resultado = ap.indicador_funil_turma(roster)
+    relatar(
+        "indicador_funil_turma: observação com REF/CONT desconta de primeira_vez mesmo sem marca no nome",
+        resultado["total"] == 3 and resultado["primeira_vez"] == 1,
+        f"resultado: {resultado}",
+    )
+
+
+def teste_indicador_funil_turma_sem_observacao_nao_quebra():
+    """fechamento_logic passa só {'nome': ...}, sem 'observacao' - não
+    pode quebrar (compatibilidade com o call site existente)."""
+    roster = [{"nome": "ALUNO SEM OBSERVACAO"}]
+    resultado = ap.indicador_funil_turma(roster)
+    relatar(
+        "indicador_funil_turma: roster sem campo 'observacao' não quebra (compatibilidade com fechamento_logic)",
+        resultado["total"] == 1 and resultado["primeira_vez"] == 1,
+        f"resultado: {resultado}",
+    )
+
+
+def teste_categoria_nome_com_observacao_refazendo():
+    relatar(
+        "categoria_nome: nome sem marca mas observação 'J1 REF' -> Refazendo",
+        ap.categoria_nome("DAVID ARMSTRONG SOARES SIMAO", "J1 REF") == "Refazendo",
+        "",
+    )
+    relatar(
+        "categoria_nome: sem observação (compatibilidade) continua funcionando só pelo nome",
+        ap.categoria_nome("-REFAZENDO1") == "Refazendo" and ap.categoria_nome("ALUNO NOVO") == "Primeira vez",
+        "",
+    )
+
+
+def teste_eh_status_ex_aluno():
+    """Caso real: ALBERTO RICARDO MENDES DE SOUZA - status Ex-aluno, nome
+    sem marca, observação ambígua ('AG J1', não 'REF') - só o status
+    revela que ele não é aluno novo (já completou a trilha antes)."""
+    relatar(
+        "eh_status_ex_aluno: 'Ex-aluno' é reconhecido (caso real: ALBERTO RICARDO)",
+        ap.eh_status_ex_aluno("Ex-aluno") is True,
+        "",
+    )
+    relatar(
+        "eh_status_ex_aluno: 'Devedor'/'-Matriculado' não são Ex-aluno",
+        ap.eh_status_ex_aluno("Devedor") is False and ap.eh_status_ex_aluno("-Matriculado") is False,
+        "",
+    )
+    relatar(
+        "eh_status_ex_aluno: vazio/None não quebra e não é Ex-aluno",
+        ap.eh_status_ex_aluno("") is False and ap.eh_status_ex_aluno(None) is False,
+        "",
+    )
+
+
+def teste_categoria_nome_com_status_ex_aluno():
+    relatar(
+        "categoria_nome: nome sem marca, observação ambígua, mas status Ex-aluno -> Refazendo (caso real: ALBERTO)",
+        ap.categoria_nome("ALBERTO RICARDO MENDES DE SOUZA", "AG J1", "Ex-aluno") == "Refazendo",
+        "",
+    )
+
+
+def teste_indicador_funil_turma_status_ex_aluno_sem_marca_no_nome():
+    """Regressão direta: Ex-aluno com nome sem marca e observação ambígua
+    não pode contar como primeira vez - achado ao vivo (ALBERTO RICARDO,
+    status Ex-aluno, observacao='AG J1' não pegava no filtro de REF/CONT)."""
+    roster = [
+        {"nome": "ALBERTO RICARDO MENDES DE SOUZA", "observacao": "AG J1", "status": "Ex-aluno"},
+        {"nome": "ALEF ADONAIS SEVERINO DA SILVA", "observacao": "J1 PRES", "status": "Devedor"},
+    ]
+    resultado = ap.indicador_funil_turma(roster)
+    relatar(
+        "indicador_funil_turma: status Ex-aluno desconta de primeira_vez mesmo com nome/observação sem marca",
+        resultado["total"] == 2 and resultado["primeira_vez"] == 1,
+        f"resultado: {resultado}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pedido do usuário (2026-09-18): J1/PY1 são os módulos de ENTRADA da
 # academia - só podem iniciar com no mínimo 10 matriculados de primeira
@@ -447,6 +564,13 @@ def main():
     teste_ex_aluno_de_verdade_trilha_nao_reconhecida_nunca_afirma()
     teste_indicador_funil_turma()
     teste_indicador_funil_turma_vazia_nao_quebra()
+    teste_eh_observacao_refazendo()
+    teste_indicador_funil_turma_observacao_refazendo_sem_marca_no_nome()
+    teste_indicador_funil_turma_sem_observacao_nao_quebra()
+    teste_categoria_nome_com_observacao_refazendo()
+    teste_eh_status_ex_aluno()
+    teste_categoria_nome_com_status_ex_aluno()
+    teste_indicador_funil_turma_status_ex_aluno_sem_marca_no_nome()
     teste_extrair_data_turma()
     teste_analisar_turma_entrada_atinge_minimo()
     teste_analisar_turma_entrada_abaixo_do_minimo()

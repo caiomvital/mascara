@@ -1013,7 +1013,32 @@ def _montar_turmas_entrada(client):
         exige essa checagem extra), busca o historico de comentarios e
         recalcula o recebido de verdade ignorando comentarios de teste
         (academia_progresso.recebido_real) em vez de confiar cego no
-        agregado de perfil_aluno."""
+        agregado de perfil_aluno.
+
+    ACHADO 5 (2026-09-18, revisao comentario a comentario de TODOS os
+    matriculados das 4 turmas abertas, pedido do usuario apos "sim, seria
+    interessante fazer o comment-by-comment de cada registro pra
+    confirmar"): o nome do aluno nem sempre e atualizado com a marca "-"
+    quando ele volta pra refazer um modulo - o campo 'observacao' (ja
+    disponivel no roster, sem custo extra) costuma trazer "REF"/"CONT"
+    mesmo sem marca nenhuma no nome. Casos reais: DAVID ARMSTRONG SOARES
+    SIMAO (nome sem marca, observacao='J1 REF', comentario confirma
+    "pediu para refazer J1" - contava como primeira vez, mas estava
+    refazendo); MARCOS AUGUSTO FERREIRA CAMPOS (observacao='PY1 PRES J2
+    CONT' - e aluno de Java continuando pra J2, nao aluno novo de
+    Python). Corrigido em academia_progresso.indicador_funil_turma/
+    categoria_nome (ver eh_observacao_refazendo).
+
+    Testando a correcao acima ao vivo apareceu mais um caso que ela nao
+    cobria: ALBERTO RICARDO MENDES DE SOUZA - status Ex-aluno, nome sem
+    marca, observacao AMBIGUA ('AG J1', nao 'REF') - so o status revelava
+    que ele nao e aluno novo (historico confirma: ja completou J1/J2/S3/A4
+    antes, voltando pra refazer J1). Um Ex-aluno nunca pode ser "primeira
+    vez" de verdade numa turma de entrada - corrigido com
+    academia_progresso.eh_status_ex_aluno, mesmo padrao dos outros dois
+    sinais. Nenhuma das correcoes desta rodada muda quem CONTA como
+    matriculado de verdade (total_matriculados), so a classificacao
+    primeira_vez/refazendo, que e o numero comparado com o minimo de 10."""
     candidatas = []
     for modulo in academia_progresso.MODULOS_ENTRADA:
         encontradas = client.buscar_turma_por_nome("." + modulo)
@@ -1055,7 +1080,7 @@ def _montar_turmas_entrada(client):
             # entrou em cada categoria antes de confiar no numero. So quem
             # matriculou de verdade (mesmo filtro do total/primeira_vez).
             "alunos": [
-                {"nome": a["nome"], "categoria": academia_progresso.categoria_nome(a["nome"])}
+                {"nome": a["nome"], "categoria": academia_progresso.categoria_nome(a["nome"], a.get("observacao"), a.get("status"))}
                 for a in matriculados_de_verdade
             ],
         })

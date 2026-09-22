@@ -138,6 +138,39 @@ def eh_observacao_monitor(observacao):
     return "monito" in (observacao or "").lower()
 
 
+_RE_OBSERVACAO_REFAZENDO = re.compile(r"\b(REF|CONT)\b", re.IGNORECASE)
+
+
+def eh_observacao_refazendo(observacao):
+    """ACHADO (2026-09-18, revisão comentário a comentário pedida pelo
+    usuário - "seria interessante fazer o comment-by-comment de cada
+    registro pra confirmar"): o nome do aluno nem sempre é atualizado com
+    a marca "-" quando ele volta pra refazer um módulo - mas o campo
+    'observacao' do roster (já disponível, sem custo extra) costuma trazer
+    "REF" (refazendo) ou "CONT" (continuidade) mesmo quando o nome não tem
+    marca nenhuma. Casos reais: DAVID ARMSTRONG SOARES SIMAO (nome sem
+    marca, observacao='J1 REF', comentário confirma "pediu para refazer
+    J1" - contava como Primeira vez, mas está refazendo); MARCOS AUGUSTO
+    FERREIRA CAMPOS (observacao='PY1 PRES J2 CONT' - é aluno de Java
+    continuando pra J2, não um aluno novo de Python). Não cobre TODO caso
+    de refazendo sem marca - ver eh_status_ex_aluno pra um caso irmão
+    (observação ambígua tipo 'AG J1', mas status Ex-aluno já denuncia)."""
+    return bool(_RE_OBSERVACAO_REFAZENDO.search(observacao or ""))
+
+
+def eh_status_ex_aluno(status):
+    """ACHADO (2026-09-18, mesma revisão): Ex-aluno (já completou uma
+    trilha inteira antes, ver eh_ex_aluno_de_verdade) nunca é "primeira
+    vez" de verdade - aparecer numa turma de ENTRADA (J1/PY1) com esse
+    status só pode significar que está voltando pra refazer, mesmo
+    quando nome e observação não têm marca nenhuma reconhecível. Caso
+    real: ALBERTO RICARDO MENDES DE SOUZA - status Ex-aluno, nome sem
+    marca, observação ambígua ('AG J1', não 'REF') - só o status revela
+    que ele não é aluno novo (confirmado pelo histórico: já completou
+    J1/J2/S3/A4 antes, voltando por pedido da mãe pra refazer)."""
+    return (status or "").strip() == "Ex-aluno"
+
+
 def turma_ainda_aberta(data_termino_str, hoje=None):
     """True se a turma ainda não terminou (dataTermino de obter_turma() é
     hoje ou no futuro) - trata data ausente/ilegível como aberta (sem dado
@@ -240,16 +273,21 @@ def eh_ex_aluno_de_verdade(nome_aluno, status_atual, turmas_atuais, trilha=None)
 LIMIAR_FUNIL_BAIXO = 0.3  # abaixo disso, vale avaliar se compensa abrir a próxima turma (ajustável)
 
 
-def categoria_nome(nome):
-    """Classificação rápida só pela marca do nome (sem consultar o
-    Fuctura) - o mesmo método manual que o Diógenes usa: "-" no nome =
-    Refazendo, "." no nome = Abandono, sem marca = Primeira vez. Pra
-    confirmação mais forte de "completou a academia de verdade" (exige
-    o histórico real de turmas), ver eh_ex_aluno_de_verdade - mais lento
-    (precisa de perfil_aluno), por isso fica separado desta função
-    rápida usada no relatório inicial da turma (antes de consultar o
-    Fuctura aluno por aluno)."""
-    if logic.eh_nome_marcado_refazendo(nome):
+def categoria_nome(nome, observacao=None, status=None):
+    """Classificação rápida pela marca do nome (sem consultar o Fuctura) -
+    o mesmo método manual que o Diógenes usa: "-" no nome = Refazendo, "."
+    no nome = Abandono, sem marca = Primeira vez. `observacao`/`status` são
+    opcionais (compatibilidade com quem só passa o nome) - quando
+    disponíveis (roster_turma já traz os dois), também conta como
+    Refazendo se a observação tiver "REF"/"CONT" (eh_observacao_refazendo)
+    ou se o status for "Ex-aluno" (eh_status_ex_aluno) - a equipe nem
+    sempre atualiza o nome quando o aluno volta pra refazer. Pra
+    confirmação mais forte de "completou a academia de verdade" (exige o
+    histórico real de turmas), ver eh_ex_aluno_de_verdade - mais lento
+    (precisa de perfil_aluno), por isso fica separado desta função rápida
+    usada no relatório inicial da turma (antes de consultar o Fuctura
+    aluno por aluno)."""
+    if logic.eh_nome_marcado_refazendo(nome) or eh_observacao_refazendo(observacao) or eh_status_ex_aluno(status):
         return "Refazendo"
     if logic.eh_nome_marcado_abandono(nome):
         return "Abandono"
@@ -305,14 +343,21 @@ def analisar_turma_entrada(nome_turma, roster, limiar_minimo=LIMIAR_MINIMO_TURMA
 def indicador_funil_turma(alunos_da_turma):
     """alunos_da_turma: lista de {'nome'} (ou qualquer dict com 'nome') -
     ex: o roster de uma turma. Conta quantos estão "primeira vez" nesse
-    módulo (sem marca de abandono/refazendo no nome AGORA) vs o total -
+    módulo (sem marca de abandono/refazendo no nome AGORA, sem "REF"/
+    "CONT" na observação - eh_observacao_refazendo -, e status diferente
+    de "Ex-aluno" - eh_status_ex_aluno -, quando presentes) vs o total -
     pedido do Diógenes: turma com poucos "primeira vez" é sinal pra
     avaliar se vale abrir a próxima turma da sequência (ex: J2 com 15
-    matriculados e só 3 prontos pra avançar)."""
+    matriculados e só 3 prontos pra avançar). 'observacao'/'status' são
+    opcionais no dict de cada aluno (ausentes = só nome decide, compatível
+    com quem chama sem esses campos, ex: fechamento_logic)."""
     total = len(alunos_da_turma)
     primeira_vez = sum(
         1 for a in alunos_da_turma
-        if not logic.eh_nome_marcado_abandono(a["nome"]) and not logic.eh_nome_marcado_refazendo(a["nome"])
+        if not logic.eh_nome_marcado_abandono(a["nome"])
+        and not logic.eh_nome_marcado_refazendo(a["nome"])
+        and not eh_observacao_refazendo(a.get("observacao"))
+        and not eh_status_ex_aluno(a.get("status"))
     )
     return {
         "total": total, "primeira_vez": primeira_vez,

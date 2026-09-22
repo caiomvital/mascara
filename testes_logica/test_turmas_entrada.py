@@ -313,6 +313,63 @@ def teste_monitor_nao_conta_como_matricula_de_primeira_vez():
     )
 
 
+def teste_observacao_ref_desconta_de_primeira_vez_mas_continua_matriculado():
+    """Regressão direta do achado real (revisão comentário a comentário,
+    "17 no mesmo bolo"): DAVID ARMSTRONG (nome sem marca "-", mas
+    observação 'J1 REF' - genuinamente refazendo) não pode contar como
+    primeira vez, mas CONTINUA contando como matriculado de verdade
+    (diferente de monitor/interessado, que não contam nem no total)."""
+    client = _ClienteFake(
+        turmas_por_termo={".J1": [_turma("1", ".J1 08/07/25 TER N")], ".PY1": []},
+        roster_por_id={"1": [
+            _aluno("DAVID ARMSTRONG SOARES SIMAO", "-Matriculado", id_aluno="david", observacao="J1 REF"),
+            _aluno("ALEF ADONAIS SEVERINO DA SILVA", "Devedor", id_aluno="alef", observacao="J1 PRES"),
+        ]},
+        perfil_por_id={
+            "david": {"contratado": 4524.0, "recebido": 4524.0},
+            "alef": {"contratado": 4901.0, "recebido": 100.0},
+        },
+    )
+    resultado = app._montar_turmas_entrada(client)
+    turma = resultado["turmas"][0]
+    nomes_listados = {a["nome"] for a in turma["alunos"]}
+    categoria_david = next(a["categoria"] for a in turma["alunos"] if a["nome"] == "DAVID ARMSTRONG SOARES SIMAO")
+    relatar(
+        "DAVID conta no total_matriculados (2) mas não em primeira_vez (1, só ALEF) - categoria mostrada é Refazendo",
+        turma["total_matriculados"] == 2 and turma["primeira_vez"] == 1
+        and nomes_listados == {"DAVID ARMSTRONG SOARES SIMAO", "ALEF ADONAIS SEVERINO DA SILVA"}
+        and categoria_david == "Refazendo",
+        f"total={turma['total_matriculados']} primeira_vez={turma['primeira_vez']} categoria_david={categoria_david}",
+    )
+
+
+def teste_status_ex_aluno_desconta_de_primeira_vez_mesmo_sem_marca():
+    """Regressão direta do achado real (2026-09-18): ALBERTO RICARDO
+    MENDES DE SOUZA - status Ex-aluno, nome sem marca "-", observação
+    ambígua ('AG J1', não 'REF') - só o status revela que ele não é aluno
+    novo. Continua contando no total_matriculados, mas não em
+    primeira_vez."""
+    client = _ClienteFake(
+        turmas_por_termo={".J1": [_turma("1", ".J1 08/07/25 TER N")], ".PY1": []},
+        roster_por_id={"1": [
+            _aluno("ALBERTO RICARDO MENDES DE SOUZA", "Ex-aluno", id_aluno="alberto", observacao="AG J1"),
+            _aluno("ALEF ADONAIS SEVERINO DA SILVA", "Devedor", id_aluno="alef", observacao="J1 PRES"),
+        ]},
+        perfil_por_id={
+            "alberto": {"contratado": 4524.0, "recebido": 4524.0},
+            "alef": {"contratado": 4901.0, "recebido": 100.0},
+        },
+    )
+    resultado = app._montar_turmas_entrada(client)
+    turma = resultado["turmas"][0]
+    categoria_alberto = next(a["categoria"] for a in turma["alunos"] if a["nome"] == "ALBERTO RICARDO MENDES DE SOUZA")
+    relatar(
+        "ALBERTO conta no total_matriculados (2) mas não em primeira_vez (1, só ALEF) - categoria mostrada é Refazendo",
+        turma["total_matriculados"] == 2 and turma["primeira_vez"] == 1 and categoria_alberto == "Refazendo",
+        f"total={turma['total_matriculados']} primeira_vez={turma['primeira_vez']} categoria_alberto={categoria_alberto}",
+    )
+
+
 def teste_turma_ja_terminada_e_excluida():
     """Regressão direta do relatado: "não tem 30 turmas abertas, tem bem
     menos" - turma com dataTermino no passado não pode aparecer, mesmo
@@ -366,6 +423,8 @@ def main():
     teste_status_ok_mas_sem_contrato_nem_pagamento_nao_conta()
     teste_pagamento_de_teste_nao_conta_como_matricula_real()
     teste_monitor_nao_conta_como_matricula_de_primeira_vez()
+    teste_observacao_ref_desconta_de_primeira_vez_mas_continua_matriculado()
+    teste_status_ex_aluno_desconta_de_primeira_vez_mesmo_sem_marca()
     teste_turma_ja_terminada_e_excluida()
     teste_turma_sem_data_termino_conta_como_aberta()
 
