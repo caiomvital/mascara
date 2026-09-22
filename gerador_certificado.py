@@ -169,9 +169,12 @@ def gerar_certificado_trilha_pdf(nome_aluno, trilha, data_conclusao=None):
 
 
 def gerar_certificado_biblia3d_pdf(nome_aluno, cidade="Recife", data_conclusao=None):
-    """Só o Módulo I por enquanto (pedido do usuário, 2026-09-22 - a
-    Bíblia 3D ainda não tem outros módulos mapeados). Retorna bytes do
-    PDF."""
+    """Template único disponível é o de "Módulo I" (pedido do usuário,
+    2026-09-22) - mesmo depois de confirmar que existem 4 módulos de
+    verdade (B3DM1-B3DM4, ver academia_progresso.SEQUENCIAS_ACADEMIA), a
+    elegibilidade (ver elegivel_para_certificado, trilha="biblia3d") já
+    exige completar os 4, só falta arte pros módulos II-IV quando o
+    usuário mandar. Retorna bytes do PDF."""
     # ACHADO REAL (2026-09-22, testando com aluno real de verdade): nome
     # do cadastro no Fuctura pode trazer prefixo "*" ou sufixo tipo
     # "(BOLETO)" - ver mesmo achado em gerar_certificado_trilha_pdf (ex

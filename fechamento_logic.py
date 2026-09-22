@@ -359,7 +359,19 @@ def _parse_data_segura(data_str):
 # mexer no lado infantil sem arriscar o lado adulto (ja testado, em uso).
 # Nomes reais de turma observados ao vivo: "Academia Biblia 3D", "B3D M1"
 # a "M4", "BL1 2025 8h30 Sab", "BL 2026 08h30 Sab 1" etc.
-_TURMA_INFANTIL_RE = re.compile(r"b[ií]blia|^b3d\b|^bl\d*\b", re.IGNORECASE)
+#
+# ACHADO REAL (2026-09-22, pedido do usuario - "Ha mais modulos no Biblia
+# 3D. Vasculhe o sistema"): as turmas de MODULO de verdade no Fuctura tem
+# nome ".B3D M1" a ".B3D M4" - com PONTO na frente, igual toda turma de
+# controle - mas "^b3d\b" exige "b3d" logo no INICIO da string, entao
+# nunca batia. So nao foi percebido antes porque o unico aluno testado
+# (JOAO CARLOS LINS DOS SANTOS) tambem estava matriculado na turma
+# "controle" ".Academia Biblia 3D" (essa sim reconhecida, "biblia" nao e
+# ancorada) - mascarando o bug. Caso real que expoe: JULIA RIBEIRO SOUZA
+# LEAO (a propria aluna do exemplo do template de certificado) esta em
+# ".B3D M4" mas NAO esta na turma controle - sem esse fix, o botao de
+# certificado nunca apareceria pra ela.
+_TURMA_INFANTIL_RE = re.compile(r"b[ií]blia|^[.\-*+\s]*b3d\b|^[.\-*+\s]*bl\d*\b", re.IGNORECASE)
 
 
 def eh_turma_infantil(nome_turma):

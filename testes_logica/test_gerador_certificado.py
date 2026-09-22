@@ -195,6 +195,28 @@ def teste_gerar_certificado_biblia3d_limpa_prefixo_asterisco_do_nome():
     )
 
 
+def teste_elegivel_para_certificado_biblia3d_exige_os_4_modulos():
+    """Achado real (2026-09-22, pedido do usuário: "Ha mais módulos no
+    Biblia 3D. Vasculhe o sistema") - existem 4 módulos de verdade
+    (B3DM1-B3DM4), mesma regra de elegibilidade de Java/Python agora."""
+    turmas_completas = [
+        {"data": "01/2026", "nome": "B3DM1 01/01 TER N"},
+        {"data": "02/2026", "nome": "B3DM2 01/02 TER N"},
+        {"data": "03/2026", "nome": "B3DM3 01/03 TER N"},
+        {"data": "04/2026", "nome": "B3DM4 01/04 TER N"},
+    ]
+    relatar(
+        "elegivel_para_certificado (biblia3d): aluno com os 4 módulos, sem marca, não Devedor -> True",
+        gc.elegivel_para_certificado("ALUNO COMPLETO", "Ex-aluno", turmas_completas, trilha="biblia3d") is True,
+        "",
+    )
+    relatar(
+        "elegivel_para_certificado (biblia3d): só com B3DM4 (caso real JULIA RIBEIRO SOUZA LEAO, sem M1-M3 registrados) -> False",
+        gc.elegivel_para_certificado("ALUNO INCOMPLETO", "Ex-aluno", turmas_completas[-1:], trilha="biblia3d") is False,
+        "",
+    )
+
+
 def teste_elegivel_para_certificado_delega_pra_academia_progresso():
     """elegivel_para_certificado reaproveita eh_ex_aluno_de_verdade -
     confere só que a delegação funciona (a lógica em si já é testada a
@@ -235,6 +257,7 @@ def main():
     teste_gerar_certificado_biblia3d_nome_comprido_nao_quebra()
     teste_gerar_certificado_trilha_limpa_sufixo_administrativo_do_nome()
     teste_gerar_certificado_biblia3d_limpa_prefixo_asterisco_do_nome()
+    teste_elegivel_para_certificado_biblia3d_exige_os_4_modulos()
     teste_elegivel_para_certificado_delega_pra_academia_progresso()
 
     print(f"\n{'=' * 70}")

@@ -2449,7 +2449,12 @@ class Handler(BaseHTTPRequestHandler):
                         cadastro.get("nome"), status_label, turmas_atuais, trilha="java"),
                     "elegivel_python": gerador_certificado.elegivel_para_certificado(
                         cadastro.get("nome"), status_label, turmas_atuais, trilha="python"),
-                    "tem_turma_infantil": any(logic.eh_turma_infantil(t.get("nome")) for t in turmas_atuais),
+                    # Achado ao vivo (2026-09-22): existem 4 módulos de
+                    # verdade (B3DM1-B3DM4) - mesma regra de elegibilidade
+                    # de Java/Python agora (completou os 4, não é Devedor,
+                    # sem marca no nome), não só "tem alguma turma infantil".
+                    "elegivel_biblia3d": gerador_certificado.elegivel_para_certificado(
+                        cadastro.get("nome"), status_label, turmas_atuais, trilha="biblia3d"),
                 },
             })
         except Exception as e:
@@ -2527,13 +2532,26 @@ class Handler(BaseHTTPRequestHandler):
         self._send_pdf(pdf, f"certificado_{trilha}_{id_aluno}.pdf")
 
     def _gerar_certificado_biblia3d(self, sessao, id_aluno):
-        """Certificado infantil (Bíblia 3D, Módulo I) - decisão do usuário
-        (2026-09-22): sem critério automático de elegibilidade por
-        enquanto (curso não tem uma sequência de módulos mapeada como
-        Java/Python) - fica a critério de quem está olhando o cadastro."""
+        """Certificado infantil (Bíblia 3D) - decisão do usuário
+        (2026-09-22, depois de descobrir os 4 módulos reais B3DM1-B3DM4):
+        mesma regra de elegibilidade de Java/Python agora (completou os 4
+        módulos, não é Devedor, sem marca de abandono/refazendo no nome),
+        reconferida aqui no backend, nunca só confiando no que a tela
+        mostrou. O template ainda é só o de "Módulo I" (sem arte pros
+        módulos II-IV ainda)."""
         try:
             client = sessao["client"]
             cadastro = client.buscar_cadastro_completo(id_aluno)
+            perfil = client.perfil_aluno(id_aluno)
+            status_label = STATUS_ALUNO.get(cadastro.get("status"), cadastro.get("status") or "")
+            turmas_atuais = perfil.get("turmas_atuais", [])
+            if not gerador_certificado.elegivel_para_certificado(
+                cadastro.get("nome"), status_label, turmas_atuais, trilha="biblia3d",
+            ):
+                self._send_json({"erro": ("Este aluno ainda não atende aos critérios reais de conclusão "
+                          "(completar os 4 módulos da Bíblia 3D, não ser Devedor, sem marca "
+                          "de abandono/refazendo no nome).")}, 400)
+                return
             pdf = gerador_certificado.gerar_certificado_biblia3d_pdf(cadastro.get("nome"))
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
@@ -3985,11 +4003,11 @@ async function selecionar(idAluno) {
         <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/aluno/${idAluno}/ficha" target="_blank">Ver Ficha (PDF)</a>
         <button class="btn-nao" onclick="toggleEditarCadastro()">Editar cadastro</button>
       </div>
-      ${d.certificado.elegivel_java || d.certificado.elegivel_python || d.certificado.tem_turma_infantil ? `
+      ${d.certificado.elegivel_java || d.certificado.elegivel_python || d.certificado.elegivel_biblia3d ? `
       <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
         ${d.certificado.elegivel_java ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado/java" target="_blank">Gerar Certificado — Java (PDF)</a>` : ''}
         ${d.certificado.elegivel_python ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado/python" target="_blank">Gerar Certificado — Python (PDF)</a>` : ''}
-        ${d.certificado.tem_turma_infantil ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado-biblia3d" target="_blank">Gerar Certificado — Bíblia 3D (PDF)</a>` : ''}
+        ${d.certificado.elegivel_biblia3d ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado-biblia3d" target="_blank">Gerar Certificado — Bíblia 3D (PDF)</a>` : ''}
       </div>` : ''}
     </div>
 

@@ -89,9 +89,40 @@ def teste_curso_completo_com_nomenclatura_antiga_j3_j4():
     )
 
 
+def teste_identificar_modulo_biblia3d():
+    """Achado real (2026-09-22, pedido do usuário: "Ha mais módulos no
+    Biblia 3D. Vasculhe o sistema") - buscando turma por nome ao vivo no
+    Fuctura, existem 4 turmas de módulo de verdade (ids 1322-1325):
+    ".B3D M1" a ".B3D M4", com espaço entre "B3D" e "M#"."""
+    relatar("identificar_modulo: '.B3D M1 ' (nome real da turma) -> B3DM1", ap.identificar_modulo(".B3D M1 ") == "B3DM1", "")
+    relatar("identificar_modulo: '.B3D M4 ' (nome real da turma) -> B3DM4", ap.identificar_modulo(".B3D M4 ") == "B3DM4", "")
+    relatar("identificar_modulo: turma controle '.Academia Biblia 3D' -> None (não é módulo)", ap.identificar_modulo(".Academia Biblia 3D") is None, "")
+
+
+def teste_curso_completo_biblia3d():
+    relatar(
+        "curso_completo: aluno com B3DM1+B3DM2+B3DM3+B3DM4 completou Bíblia 3D de verdade",
+        ap.curso_completo(_turmas_ate("B3DM1", "B3DM2", "B3DM3", "B3DM4"), "biblia3d") is True,
+        "",
+    )
+    relatar(
+        "curso_completo: aluno só com B3DM4 (caso real: JULIA RIBEIRO SOUZA LEAO, sem M1-M3 registrados) NÃO completou",
+        ap.curso_completo(_turmas_ate("B3DM4"), "biblia3d") is False,
+        "",
+    )
+    relatar(
+        "eh_ex_aluno_de_verdade: trilha biblia3d respeita a mesma regra (Devedor -> False mesmo com os 4 módulos)",
+        ap.eh_ex_aluno_de_verdade(
+            "ALUNO COMPLETO", "Devedor", _turmas_ate("B3DM1", "B3DM2", "B3DM3", "B3DM4"), trilha="biblia3d",
+        ) is False,
+        "",
+    )
+
+
 def teste_identificar_trilha():
     relatar("identificar_trilha: JA4 -> java", ap.identificar_trilha("JA4") == "java", "")
     relatar("identificar_trilha: PY3 -> python", ap.identificar_trilha("PY3") == "python", "")
+    relatar("identificar_trilha: B3DM2 -> biblia3d", ap.identificar_trilha("B3DM2") == "biblia3d", "")
     relatar("identificar_trilha: módulo desconhecido -> None", ap.identificar_trilha("XX9") is None, "")
 
 
@@ -600,6 +631,8 @@ def main():
     teste_identificar_modulo()
     teste_identificar_modulo_nomenclatura_antiga_j3_j4()
     teste_curso_completo_com_nomenclatura_antiga_j3_j4()
+    teste_identificar_modulo_biblia3d()
+    teste_curso_completo_biblia3d()
     teste_identificar_trilha()
     teste_curso_completo_java()
     teste_curso_completo_python_independente_de_java()

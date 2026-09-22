@@ -31,6 +31,15 @@ import fechamento_logic as logic
 SEQUENCIAS_ACADEMIA = {
     "java": ["J1", "J2", "JS3", "JA4"],
     "python": ["PY1", "PY2", "PY3", "PY4"],
+    # Achado ao vivo (2026-09-22, pedido do usuario - "Ha mais modulos no
+    # Biblia 3D. Vasculhe o sistema"): existem 4 turmas de modulo de
+    # verdade no Fuctura (".B3D M1" a ".B3D M4", ids 1322-1325, 12/6/2/4
+    # alunos) - alem da turma "controle" ".Academia Biblia 3D" (109
+    # alunos, so vinculo administrativo, nao e um modulo). Nenhum aluno
+    # esta matriculado nos 4 ao mesmo tempo hoje (interseccao vazia) - a
+    # regra de "completou tudo" (curso_completo/eh_ex_aluno_de_verdade)
+    # ainda se aplica igual Java/Python, so que por enquanto ninguem bate.
+    "biblia3d": ["B3DM1", "B3DM2", "B3DM3", "B3DM4"],
 }
 
 # Pedido do usuário (2026-09-18): J1 e PY1 são os módulos de ENTRADA da
@@ -203,19 +212,27 @@ def turma_ainda_aberta(data_termino_str, hoje=None):
 # os códigos canônicos "JS3"/"JA4" aqui, pra tudo mais no sistema (Ex-
 # aluno de verdade, restrição de quem pode marcar Ex-aluno, certificado)
 # continuar funcionando sem precisar saber dessa nomenclatura antiga.
-_RE_MODULO = re.compile(r"^\.?\s*(J1|J2|JS3|JA4|J3|J4|PY1|PY2|PY3|PY4)\b", re.IGNORECASE)
+# Bíblia 3D (achado ao vivo 2026-09-22): turma de módulo tem nome ".B3D
+# M1" a ".B3D M4" (com espaço entre "B3D" e "M#", ponto de controle na
+# frente igual as outras) - "B3D\s*M[1-4]" casa isso, e
+# identificar_modulo tira o espaço do meio pra virar o código canônico
+# "B3DM1"..."B3DM4" (igual SEQUENCIAS_ACADEMIA["biblia3d"]).
+_RE_MODULO = re.compile(
+    r"^\.?\s*(J1|J2|JS3|JA4|J3|J4|PY1|PY2|PY3|PY4|B3D\s*M[1-4])\b", re.IGNORECASE,
+)
 _ALIAS_MODULO_ANTIGO = {"J3": "JS3", "J4": "JA4"}
 
 
 def identificar_modulo(nome_turma):
-    """Extrai a sigla do módulo (ex: 'JA4') do nome de uma turma, ou None
-    se não bater com nenhuma sequência conhecida (turma de controle,
-    curso fora de Java/Python, etc.). Nomenclatura antiga "J3"/"J4" (ver
-    _ALIAS_MODULO_ANTIGO) já sai traduzida pro código canônico."""
+    """Extrai a sigla do módulo (ex: 'JA4', 'B3DM2') do nome de uma
+    turma, ou None se não bater com nenhuma sequência conhecida (turma de
+    controle, curso fora de Java/Python/Bíblia 3D, etc.). Nomenclatura
+    antiga "J3"/"J4" (ver _ALIAS_MODULO_ANTIGO) já sai traduzida pro
+    código canônico."""
     m = _RE_MODULO.match((nome_turma or "").strip())
     if not m:
         return None
-    codigo = m.group(1).upper()
+    codigo = re.sub(r"\s+", "", m.group(1).upper())
     return _ALIAS_MODULO_ANTIGO.get(codigo, codigo)
 
 

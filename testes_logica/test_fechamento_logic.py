@@ -297,6 +297,23 @@ def teste_eh_turma_infantil_reconhece_nomes_reais_biblia_3d():
         )
 
 
+def teste_eh_turma_infantil_reconhece_nomes_reais_com_ponto_de_controle():
+    """Achado real (2026-09-22, pedido do usuário: "Ha mais módulos no
+    Biblia 3D. Vasculhe o sistema") - as turmas de MÓDULO de verdade no
+    Fuctura têm nome ".B3D M1" a ".B3D M4" (ponto na frente, igual toda
+    turma de controle) - a regex antiga exigia "b3d" logo no início da
+    string e nunca batia com essas. Caso real que expôs o bug: JULIA
+    RIBEIRO SOUZA LEAO (a aluna do exemplo do template de certificado)
+    está em ".B3D M4" mas não na turma "controle" ".Academia Biblia 3D"."""
+    nomes = [".B3D M1 ", ".B3D M2 ", ".B3D M3 ", ".B3D M4 ", ".Academia Biblia 3D", "--Biblia 3D Interessados"]
+    for nome in nomes:
+        relatar(
+            f"eh_turma_infantil reconhece {nome!r} (nome real de turma, com ponto de controle) como infantil",
+            logic.eh_turma_infantil(nome) is True,
+            f"não reconheceu {nome!r}",
+        )
+
+
 def teste_eh_turma_infantil_nao_reconhece_turmas_de_adulto():
     nomes_adulto = [
         "Academia Java Full Stack (4M)", "J1 27/01/24 Sab M", "PY2 07/12/24 SAB M",
@@ -910,6 +927,7 @@ def main():
     teste_nota_devedor_so_na_turma_advogado_sem_debito_nem_status_pede_conferencia()
     teste_nota_devedor_com_debito_na_turma_advogado_diz_que_nao_esta_na_de_devedor()
     teste_eh_turma_infantil_reconhece_nomes_reais_biblia_3d()
+    teste_eh_turma_infantil_reconhece_nomes_reais_com_ponto_de_controle()
     teste_eh_turma_infantil_nao_reconhece_turmas_de_adulto()
     teste_montar_relatorio_turma_infantil_marca_rotulo()
     teste_montar_relatorio_turma_categoriza_por_marca_do_nome()
