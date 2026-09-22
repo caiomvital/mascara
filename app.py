@@ -28,6 +28,7 @@ import drive_client
 import email_cobranca
 import extrato_bancario
 import fotos_aluno
+import gerador_certificado
 import gmail_client
 import manutencao
 import fechamento_logic as logic
@@ -1470,6 +1471,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_pdf(pdf, f"ficha_{id_aluno}.pdf")
             return
 
+        if parsed.path.startswith("/api/aluno/") and "/certificado/" in parsed.path:
+            partes = parsed.path.split("/")
+            id_aluno, trilha = partes[3], partes[5]
+            self._gerar_certificado_trilha(sessao, id_aluno, trilha)
+            return
+
+        if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/certificado-biblia3d"):
+            id_aluno = parsed.path.split("/")[3]
+            self._gerar_certificado_biblia3d(sessao, id_aluno)
+            return
+
         if parsed.path.startswith("/api/aluno/") and parsed.path.endswith("/foto"):
             id_aluno = parsed.path.split("/")[3]
             dados = fotos_aluno.ler_foto(id_aluno)
@@ -2417,15 +2429,28 @@ class Handler(BaseHTTPRequestHandler):
             cadastro = client.buscar_cadastro_completo(id_aluno)
             perfil = client.perfil_aluno(id_aluno)
             comentarios = client.comentarios_aluno(id_aluno)
+            status_label = STATUS_ALUNO.get(cadastro.get("status"), cadastro.get("status") or "(não definido)")
+            turmas_atuais = perfil.get("turmas_atuais", [])
+            # Pedido do usuario (2026-09-22): botao de certificado so
+            # aparece quando o aluno realmente atende os criterios (mesma
+            # regra de eh_ex_aluno_de_verdade) - a decisao de gerar ou nao
+            # nao fica a criterio de quem esta na tela, o backend calcula.
             self._send_json({
                 "cadastro": cadastro,
-                "status_label": STATUS_ALUNO.get(cadastro.get("status"), cadastro.get("status") or "(não definido)"),
+                "status_label": status_label,
                 "financeiro": {
                     "contratado": perfil.get("contratado"), "recebido": perfil.get("recebido"),
                     "diferenca": perfil.get("diferenca"),
                 },
-                "turmas_atuais": perfil.get("turmas_atuais", []),
+                "turmas_atuais": turmas_atuais,
                 "comentarios": list(reversed(comentarios)),
+                "certificado": {
+                    "elegivel_java": gerador_certificado.elegivel_para_certificado(
+                        cadastro.get("nome"), status_label, turmas_atuais, trilha="java"),
+                    "elegivel_python": gerador_certificado.elegivel_para_certificado(
+                        cadastro.get("nome"), status_label, turmas_atuais, trilha="python"),
+                    "tem_turma_infantil": any(logic.eh_turma_infantil(t.get("nome")) for t in turmas_atuais),
+                },
             })
         except Exception as e:
             self._send_json({"erro": str(e)}, 500)
@@ -2470,6 +2495,50 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         self._send_json({"ok": True, **base, "modo": "ia", "provedor": prov, "resumo_ia": (texto or "").strip()})
+
+    def _gerar_certificado_trilha(self, sessao, id_aluno, trilha):
+        """Certificado de Java/Python - so gera quando o aluno realmente
+        atende os criterios (mesma regra de eh_ex_aluno_de_verdade, ver
+        gerador_certificado.elegivel_para_certificado) - reconfere aqui
+        no backend, nunca confia so no que a tela mostrou (pode estar
+        desatualizado se algo mudou entre carregar a tela e clicar)."""
+        try:
+            client = sessao["client"]
+            cadastro = client.buscar_cadastro_completo(id_aluno)
+            perfil = client.perfil_aluno(id_aluno)
+            status_label = STATUS_ALUNO.get(cadastro.get("status"), cadastro.get("status") or "")
+            turmas_atuais = perfil.get("turmas_atuais", [])
+            if not gerador_certificado.elegivel_para_certificado(
+                cadastro.get("nome"), status_label, turmas_atuais, trilha=trilha,
+            ):
+                self._send_json({
+                    "erro": ("Este aluno ainda não atende aos critérios reais de conclusão "
+                              "(completar todos os módulos da trilha, não ser Devedor, sem marca "
+                              "de abandono/refazendo no nome)."),
+                }, 400)
+                return
+            pdf = gerador_certificado.gerar_certificado_trilha_pdf(cadastro.get("nome"), trilha)
+        except ValueError as e:
+            self._send_json({"erro": str(e)}, 400)
+            return
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+            return
+        self._send_pdf(pdf, f"certificado_{trilha}_{id_aluno}.pdf")
+
+    def _gerar_certificado_biblia3d(self, sessao, id_aluno):
+        """Certificado infantil (Bíblia 3D, Módulo I) - decisão do usuário
+        (2026-09-22): sem critério automático de elegibilidade por
+        enquanto (curso não tem uma sequência de módulos mapeada como
+        Java/Python) - fica a critério de quem está olhando o cadastro."""
+        try:
+            client = sessao["client"]
+            cadastro = client.buscar_cadastro_completo(id_aluno)
+            pdf = gerador_certificado.gerar_certificado_biblia3d_pdf(cadastro.get("nome"))
+        except Exception as e:
+            self._send_json({"erro": str(e)}, 500)
+            return
+        self._send_pdf(pdf, f"certificado_biblia3d_{id_aluno}.pdf")
 
     def _upload_foto_aluno(self, id_aluno):
         """Foto de aluno e uma funcionalidade nova, guardada só localmente
@@ -3911,11 +3980,17 @@ async function selecionar(idAluno) {
         <tr><th>CEP</th><td>${c.cep || '—'}</td></tr>
         <tr><th>Nascimento</th><td>${c.dataNascimento || '—'}</td></tr>
       </table>
-      <div style="margin-top:14px; display:flex; gap:10px;">
+      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
         <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/aluno/${idAluno}/contrato" target="_blank">Ver Contrato (PDF)</a>
         <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/aluno/${idAluno}/ficha" target="_blank">Ver Ficha (PDF)</a>
         <button class="btn-nao" onclick="toggleEditarCadastro()">Editar cadastro</button>
       </div>
+      ${d.certificado.elegivel_java || d.certificado.elegivel_python || d.certificado.tem_turma_infantil ? `
+      <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+        ${d.certificado.elegivel_java ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado/java" target="_blank">Gerar Certificado — Java (PDF)</a>` : ''}
+        ${d.certificado.elegivel_python ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado/python" target="_blank">Gerar Certificado — Python (PDF)</a>` : ''}
+        ${d.certificado.tem_turma_infantil ? `<a class="acao" style="text-decoration:none; display:inline-block; background:var(--success);" href="/api/aluno/${idAluno}/certificado-biblia3d" target="_blank">Gerar Certificado — Bíblia 3D (PDF)</a>` : ''}
+      </div>` : ''}
     </div>
 
     <div class="card">
