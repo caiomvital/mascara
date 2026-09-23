@@ -715,7 +715,7 @@ __AVISOS__
 <a class="proc-card" href="/ata">
   <div class="proc-icon">🗒</div>
   <div class="proc-title">Ata de Chamada</div>
-  <div class="proc-desc">Gera a Ata de Chamada oficial de uma turma — todo aluno vinculado, ativo ou não. Só leitura.</div>
+  <div class="proc-desc">Gera o PDF da Ata de Chamada oficial de uma turma, pronto pra imprimir — todo aluno vinculado, ativo ou não. Só leitura.</div>
 </a>
 <a class="proc-card" href="/turmas">
   <div class="proc-icon">🏫</div>
@@ -1398,6 +1398,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(sessao["client"].roster_turma(id_turma))
             except Exception as e:
                 self._send_json({"erro": str(e)}, 500)
+            return
+
+        if parsed.path.startswith("/api/turma/") and parsed.path.endswith("/ata-pdf"):
+            # PDF original da Ata de Chamada do Fuctura, pronto pra imprimir
+            # (pedido do usuário, 2026-09-23: "onde gerar a ata para
+            # impressão assim como faz o schoolfine") - a tela /ata só
+            # mostrava a tabela extraída, nunca entregava o PDF.
+            id_turma = parsed.path.split("/")[3]
+            try:
+                pdf = sessao["client"].gerar_ata_chamada_pdf_bruto(id_turma)
+            except Exception as e:
+                self._send_json({"erro": str(e)}, 500)
+                return
+            if pdf is None:
+                self._send_json({"erro": "O Fuctura não retornou um PDF pra essa turma (provavelmente sem alunos vinculados)."}, 500)
+                return
+            self._send_pdf(pdf, f"ata_chamada_{id_turma}.pdf")
             return
 
         if parsed.path.startswith("/api/turma/") and parsed.path.endswith("/verificacao"):
@@ -4688,7 +4705,9 @@ vinculado à turma, ativo ou não, com situação e celular direto do cadastro. 
   <input type="hidden" id="turmaId">
   <div id="turmaEscolhida" style="margin-top:8px; font-weight:600;"></div>
   <br>
-  <button class="acao" onclick="gerarAta()">Gerar Ata</button>
+  <button class="acao" onclick="imprimirAta()">Ata para imprimir (PDF)</button>
+  &nbsp;
+  <button class="btn-nao" onclick="gerarAta()">Ver lista na tela</button>
   <span id="status"></span>
 </div>
 
@@ -4714,6 +4733,11 @@ function escolherTurma(id, nome) {
   document.getElementById('turmaEscolhida').textContent = 'Selecionada: ' + nome;
   document.getElementById('resultadosTurma').innerHTML = '';
   document.getElementById('buscaTurma').value = nome;
+}
+
+function imprimirAta() {
+  if (!turmaSelecionada) { alert('Escolha uma turma primeiro.'); return; }
+  window.open(`/api/turma/${turmaSelecionada.id}/ata-pdf`, '_blank');
 }
 
 async function gerarAta() {
@@ -4837,6 +4861,8 @@ async function escolherTurma(id, nome) {
     <div class="card">
       <h2 style="margin-top:0;">${nome}</h2>
       <div style="margin-bottom:10px;">
+        <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/turma/${id}/ata-pdf" target="_blank">Ata de Chamada (PDF p/ imprimir)</a>
+        &nbsp;
         <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/turma/${id}/verificacao" target="_blank">Verificação de Turma (PDF)</a>
         &nbsp;
         <a class="acao" style="text-decoration:none; display:inline-block;" href="/api/turma/${id}/pagamentos" target="_blank">Pagamentos (PDF)</a>

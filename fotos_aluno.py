@@ -15,7 +15,7 @@ dezenas a ~150KB).
 import os
 from io import BytesIO
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 DIRETORIO_FOTOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fotos_alunos")
 TAMANHO_MAXIMO_LADO = 800  # px
@@ -54,6 +54,11 @@ def salvar_foto(id_aluno, dados_brutos):
         imagem.load()
     except (UnidentifiedImageError, OSError):
         raise ValueError("Arquivo não é uma imagem reconhecível (use JPEG ou PNG).")
+    # Foto de celular vem "deitada" de verdade nos pixels e a orientação
+    # certa só fica na tag EXIF (achado real, 2026-09-23: usuário tirou
+    # foto do próprio celular e ela apareceu de lado) - aplica a rotação
+    # ANTES de converter/salvar, que descarta o EXIF.
+    imagem = ImageOps.exif_transpose(imagem)
     imagem = imagem.convert("RGB")
     imagem.thumbnail((TAMANHO_MAXIMO_LADO, TAMANHO_MAXIMO_LADO))
     os.makedirs(DIRETORIO_FOTOS, exist_ok=True)

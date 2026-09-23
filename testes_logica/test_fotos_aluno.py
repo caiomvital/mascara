@@ -90,6 +90,24 @@ def teste_salvar_foto_redimensiona_e_comprime():
     )
 
 
+def teste_salvar_foto_respeita_orientacao_exif_do_celular():
+    """Achado real (2026-09-23, usuário testou na prática): foto tirada no
+    celular em pé vem gravada DEITADA nos pixels (paisagem) com a tag EXIF
+    Orientation=6 dizendo "gire 90° pra exibir" - sem aplicar isso, a foto
+    aparecia de lado no perfil."""
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Orientation: rotacionar 90° horário pra ficar em pé
+    buf = io.BytesIO()
+    Image.new("RGB", (1200, 800), color=(10, 200, 30)).save(buf, "JPEG", exif=exif)
+    fa.salvar_foto("102", buf.getvalue())
+    imagem_salva = Image.open(io.BytesIO(fa.ler_foto("102")))
+    relatar(
+        "salvar_foto: foto de celular com EXIF Orientation=6 sai em pé (altura > largura), não deitada",
+        imagem_salva.size[1] > imagem_salva.size[0],
+        f"tamanho salvo: {imagem_salva.size}",
+    )
+
+
 def teste_salvar_foto_arquivo_grande_demais_e_rejeitado():
     dados_falsos = b"x" * (fa.LIMITE_UPLOAD_BYTES + 1)
     try:
@@ -152,6 +170,7 @@ def main():
         teste_tem_foto_falso_quando_nunca_enviou()
         teste_salvar_e_ler_foto()
         teste_salvar_foto_redimensiona_e_comprime()
+        teste_salvar_foto_respeita_orientacao_exif_do_celular()
         teste_salvar_foto_arquivo_grande_demais_e_rejeitado()
         teste_salvar_foto_arquivo_nao_e_imagem_e_rejeitado()
         teste_remover_foto()
